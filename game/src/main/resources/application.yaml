@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: game
+
+server:
+  servlet:
+    session:
+      # 로그인 세션 = 플레이어 식별. WebSocket 통신은 HTTP 세션을 갱신하지 않으므로,
+      # 게임 도중 새로고침해도 같은 플레이어로 재접속할 수 있도록 넉넉하게 설정
+      timeout: 6h
+      # 세션 ID가 URL(;jsessionid=...)에 붙지 않도록 쿠키로만 추적
+      tracking-modes: cookie
+      cookie:
+        http-only: true

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>달무티 - 입장</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+
+<div class="page login-box">
+    <h1>👑 달무티</h1>
+
+    <form class="panel" th:action="@{/login}" method="post">
+        <h3>입장하기</h3>
+        <p>게임에서 사용할 이름을 정해주세요. (1~12자)</p>
+
+        <div class="error" th:if="${error}" th:text="${error}">오류 메시지</div>
+
+        <input type="text" name="name" th:value="${name}" placeholder="이름" maxlength="12"
+               autocomplete="nickname" enterkeyhint="go" required autofocus>
+        <button type="submit">입장</button>
+    </form>
+</div>
+
+</body>
+</html>

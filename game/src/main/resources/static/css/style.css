@@ -1,0 +1,314 @@
+/* 모바일 우선 레이아웃. 넓은 화면에서는 가운데 480px 폭으로 표시 */
+:root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --panel-2: #0f3460;
+    --text: #e6e6e6;
+    --muted: #8a8fa8;
+    --accent: #e94560;
+    --accent-dark: #c0354e;
+    --green: #4ecca3;
+    --gold: #f0a500;
+    --gold-light: #ffd369;
+    --action-bar-h: 76px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.4;
+}
+/* 더블탭 확대 방지 + 탭 하이라이트 제거 */
+button, .card-tile, summary { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* iOS는 16px 미만 입력칸에 포커스하면 화면을 확대하므로 16px 이상 */
+input { font-size: 16px; }
+
+.page {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 0 12px calc(var(--action-bar-h) + env(safe-area-inset-bottom) + 16px);
+}
+
+/* ---------- 버튼 ---------- */
+button {
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 2px solid transparent;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.btn-pass { background: var(--green); color: var(--bg); }
+.btn-tax { background: var(--gold); color: var(--bg); }
+.btn-ghost { background: transparent; color: var(--text); border-color: #454b66; }
+.btn-revolution { background: linear-gradient(135deg, #9b6fd0, var(--accent)); color: #fff; }
+/* 마우스가 있는 기기에서만 hover 효과 (터치에서는 탭 후 색이 남는 문제 방지) */
+@media (hover: hover) {
+    button:hover { filter: brightness(0.9); }
+}
+/* 비활성 버튼: 종류별 색보다 우선 */
+button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
+    background: #2a2f45;
+    color: #6b7090;
+    border: 2px dashed #454b66;
+    cursor: not-allowed;
+    filter: none;
+}
+
+/* ---------- 헤더 ---------- */
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) 0 8px;
+    background: var(--bg);
+}
+.app-title { font-size: 18px; color: var(--accent); font-weight: bold; }
+.conn { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); margin-left: 8px; }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
+.conn.ok .conn-dot { background: var(--green); }
+.conn.bad .conn-dot { background: var(--accent); }
+
+.user-menu { position: relative; }
+.user-menu summary {
+    list-style: none;
+    padding: 8px 12px;
+    border-radius: 18px;
+    background: var(--panel-2);
+    color: var(--green);
+    font-weight: bold;
+    cursor: pointer;
+    max-width: 160px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.user-menu summary::-webkit-details-marker { display: none; }
+.user-menu .menu-items {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    background: var(--panel);
+    border: 1px solid var(--panel-2);
+    border-radius: 10px;
+    min-width: 140px;
+}
+.user-menu .menu-items button { width: 100%; }
+
+/* ---------- 공통 패널 ---------- */
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-2);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+.panel-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+.link-btn { min-height: 32px; padding: 4px 10px; font-size: 13px; background: transparent; color: var(--muted); border: 1px solid #454b66; }
+
+/* ---------- 상태 (바닥 카드 / 차례) ---------- */
+.status { text-align: center; }
+.trick { min-height: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.trick-cards { display: flex; align-items: center; gap: 10px; }
+.trick-cards .card-face { width: 56px; height: 76px; }
+.trick-count { font-size: 22px; font-weight: bold; }
+.trick-text { color: var(--muted); }
+.turn-text { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--panel-2); font-weight: bold; }
+.turn-text.mine { background: var(--accent); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.75; } }
+
+/* ---------- 플레이어 칩 (가로 스크롤) ---------- */
+.players {
+    position: relative;  /* 칩 offsetLeft 기준 */
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+}
+.players::-webkit-scrollbar { display: none; }
+.player-chip {
+    flex: 0 0 auto;
+    min-width: 88px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--panel-2);
+    border: 2px solid transparent;
+    font-size: 13px;
+}
+.player-chip .p-name { font-weight: bold; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-chip .p-meta { color: var(--muted); font-size: 12px; }
+.player-chip .p-badge { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: bold; }
+.player-chip.me { background: #1b3a5c; }
+.player-chip.turn { border-color: var(--accent); }
+.player-chip.away { opacity: 0.5; }
+
+/* ---------- 카드 ---------- */
+.card-face {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: linear-gradient(160deg, #f4e9d8, #d9c7a7);
+    color: #2b1d0e;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.card-face .num { font-size: 24px; font-weight: 800; line-height: 1; }
+.card-face .name { font-size: 11px; margin-top: 4px; }
+.card-face.jester { background: linear-gradient(160deg, #d7b8f3, #9b6fd0); color: #22103a; }
+
+/* 손패: 같은 카드 묶음 타일 */
+.hand {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 10px;
+}
+.card-tile {
+    position: relative;
+    height: 96px;
+    width: 100%;
+    border: 3px solid transparent;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.1s;
+}
+.card-tile .count {
+    position: absolute;
+    right: 4px;
+    bottom: 3px;
+    font-size: 12px;
+    font-weight: bold;
+}
+.card-tile .sel {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    border-radius: 12px;
+    background: var(--green);
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 24px;
+    text-align: center;
+}
+.card-tile .recv {
+    position: absolute;
+    top: 3px;
+    left: 5px;
+    font-size: 12px;
+    color: #a15c00;
+    font-weight: bold;
+}
+.card-tile.selected { border-color: var(--green); transform: translateY(-4px); }
+.card-tile.received { box-shadow: 0 0 0 3px var(--gold-light); }
+.hand-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 20px 0; }
+
+/* ---------- 하단 고정 액션 바 ---------- */
+.action-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    background: rgba(22, 33, 62, 0.97);
+    border-top: 1px solid var(--panel-2);
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+.action-bar-inner { max-width: 480px; margin: 0 auto; }
+.action-hint { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 6px; min-height: 16px; }
+.action-buttons { display: flex; gap: 8px; }
+.action-buttons button { flex: 1; min-height: 48px; }
+.action-buttons .btn-pass { flex: 0 0 34%; }
+.hidden { display: none !important; }
+
+/* ---------- 세금 교환 배너 ---------- */
+.tax-banner {
+    display: none;
+    background: linear-gradient(135deg, var(--gold), #cf7500);
+    color: var(--bg);
+    border: 2px solid var(--gold-light);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+.tax-banner.active { display: block; }
+.tax-banner h2 { font-size: 17px; margin-bottom: 6px; }
+.tax-banner .my-task { font-weight: bold; margin-bottom: 4px; }
+.tax-banner .waiting { font-size: 13px; }
+.panel.tax-mode { border: 2px solid var(--gold); }
+
+/* ---------- 혁명 ---------- */
+.rev-banner {
+    display: none;
+    background: linear-gradient(135deg, #6b3fa0, #b0304a);
+    color: #fff;
+    border: 2px solid #d7b8f3;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+.rev-banner.active { display: block; }
+.rev-banner h2 { font-size: 17px; margin-bottom: 6px; }
+.rev-tag { margin-top: 6px; font-size: 13px; font-weight: bold; color: #d7b8f3; }
+
+/* ---------- 기록 (접힘) ---------- */
+.log-panel summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.log-box { margin-top: 8px; max-height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+.log-entry { padding: 2px 0; border-bottom: 1px solid var(--panel-2); }
+
+/* ---------- 토스트 알림 ---------- */
+.toasts {
+    position: fixed;
+    top: calc(56px + env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(92vw, 420px);
+    pointer-events: none;
+}
+.toast {
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: #2b3354;
+    color: #fff;
+    font-weight: bold;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    animation: toast-in 0.2s ease-out;
+    transition: opacity 0.3s;
+}
+.toast.error { background: var(--accent); }
+.toast.turn { background: var(--green); color: var(--bg); }
+.toast.hide { opacity: 0; }
+@keyframes toast-in { from { transform: translateY(-8px); opacity: 0; } }
+
+/* ---------- 로그인 페이지 ---------- */
+.login-box { padding-top: 15vh; }
+.login-box h1 { text-align: center; color: var(--accent); font-size: 24px; margin-bottom: 20px; }
+.login-box h3 { margin-bottom: 8px; }
+.login-box p { margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+.login-box .error { color: var(--accent); margin-bottom: 10px; font-weight: bold; }
+.login-box input { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 10px; border: 1px solid var(--panel-2); background: var(--panel-2); color: #fff; }
+.login-box button { width: 100%; }

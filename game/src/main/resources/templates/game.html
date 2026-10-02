@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <!-- viewport-fit=cover: 노치/홈 바 영역까지 사용하고 safe-area 여백은 CSS에서 처리 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>달무티 (Great Dalmuti)</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <!-- SockJS 및 STOMP CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+</head>
+<body>
+
+<div id="toasts" class="toasts"></div>
+
+<div class="page">
+    <header class="app-header">
+        <div>
+            <span class="app-title">👑 달무티</span>
+            <span id="conn" class="conn"><span class="conn-dot"></span><span id="connText">연결 중</span></span>
+        </div>
+        <details class="user-menu">
+            <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
+            <div class="menu-items">
+                <form th:action="@{/login}" method="get">
+                    <button type="submit" class="btn-ghost">이름 변경</button>
+                </form>
+                <form th:action="@{/logout}" method="post">
+                    <button type="submit" class="btn-ghost">로그아웃</button>
+                </form>
+            </div>
+        </details>
+    </header>
+
+    <!-- 혁명 선언 안내 (어릿광대 2장을 받은 본인에게만 표시) -->
+    <div id="revBanner" class="rev-banner">
+        <h2>🃏 어릿광대 2장!</h2>
+        <div id="revText" class="my-task"></div>
+    </div>
+
+    <!-- 세금 교환 단계 안내 (해당 단계에서만 표시) -->
+    <div id="taxBanner" class="tax-banner">
+        <h2>💰 세금 교환 단계</h2>
+        <div id="taxMyTask" class="my-task"></div>
+        <div id="taxWaiting" class="waiting"></div>
+    </div>
+
+    <!-- 바닥 카드 / 차례 -->
+    <section class="panel status">
+        <div id="trick" class="trick"></div>
+        <div id="turnText" class="turn-text hidden"></div>
+    </section>
+
+    <!-- 플레이어 -->
+    <section class="panel">
+        <div class="panel-title"><span id="playersTitle">플레이어</span></div>
+        <div id="players" class="players"></div>
+    </section>
+
+    <!-- 내 손패 -->
+    <section id="handPanel" class="panel">
+        <div class="panel-title">
+            <span id="handTitle">내 손패</span>
+            <button id="btnClear" class="link-btn hidden" onclick="clearSelection()">선택 해제</button>
+        </div>
+        <div id="hand" class="hand"></div>
+    </section>
+
+    <!-- 기록 (기본 접힘) -->
+    <details class="panel log-panel">
+        <summary>기록</summary>
+        <div id="logBox" class="log-box"></div>
+    </details>
+</div>
+
+<!-- 하단 고정 액션 바 -->
+<div class="action-bar">
+    <div class="action-bar-inner">
+        <div id="actionHint" class="action-hint"></div>
+        <div class="action-buttons">
+            <button id="btnStart" class="hidden" onclick="startGame()">게임 시작</button>
+            <button id="btnPass" class="btn-pass hidden" onclick="passTurn()">패스</button>
+            <button id="btnPlay" class="hidden" onclick="playSelectedCards()">내기</button>
+            <button id="btnTax" class="btn-tax hidden" onclick="returnTax()">돌려주기</button>
+            <button id="btnNoRevolution" class="btn-ghost hidden" onclick="decideRevolution(false)">하지 않음</button>
+            <button id="btnRevolution" class="btn-revolution hidden" onclick="decideRevolution(true)">🔥 혁명 선언</button>
+        </div>
+    </div>
+</div>
+
+<!-- 서버에서 내려주는 설정 (로그인 정보, 카드/신분 표시 이름) -->
+<script th:inline="javascript">
+    const GAME_CONFIG = {
+        playerId: /*[[${playerId}]]*/ 'player-id',
+        playerName: /*[[${playerName}]]*/ '플레이어',
+        cards: /*[[${cards}]]*/ {},
+        rankNames: /*[[${rankNames}]]*/ {}
+    };
+</script>
+<script th:src="@{/js/game.js}"></script>
+</body>
+</html>

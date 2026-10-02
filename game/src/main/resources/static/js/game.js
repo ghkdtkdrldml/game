@@ -5,6 +5,7 @@ const RECONNECT_DELAY_MS = 3000;
 const TOAST_MS = 2500;
 const MIN_PLAYERS = 2;
 
+const roomCode = GAME_CONFIG.roomCode;
 const myPlayerId = GAME_CONFIG.playerId;
 const cardInfo = GAME_CONFIG.cards;       // { DALMUTI: { value: 1, name: '달무티' }, ... }
 const rankNames = GAME_CONFIG.rankNames;
@@ -14,7 +15,8 @@ const cardOrder = Object.keys(cardInfo).sort((a, b) => cardInfo[a].value - cardI
 let stompClient = null;
 let connected = false;
 let reconnectTimer = null;
-let room = null;       // 방 공개 상태 (/topic/room)
+let leaving = false;   // 강퇴·방 없음으로 홈으로 이동 중이면 재연결하지 않음
+let room = null;       // 방 공개 상태 (/topic/room/{방 코드})
 let me = null;         // 내 손패, 세금 내역 (/user/queue/private)
 let selected = {};     // 선택한 카드 종류 → 장수
 
@@ -36,7 +38,7 @@ function connect() {
         setConnection('ok', '연결됨');
         log('서버에 연결되었습니다.');
 
-        stompClient.subscribe('/topic/room', message => onRoomState(JSON.parse(message.body)));
+        stompClient.subscribe(`/topic/room/${roomCode}`, message => onRoomState(JSON.parse(message.body)));
         stompClient.subscribe('/user/queue/private', message => {
             const prevMe = me;
             me = JSON.parse(message.body);
@@ -51,20 +53,27 @@ function connect() {
             const error = JSON.parse(message.body);
             log('⚠ ' + error.message);
             toast(error.message, 'error');
-            // 입장하려는데 같은 이름이 이미 방에 있으면 이름을 바꾸도록 로그인 화면으로
+            // 입장하려는데 같은 이름이 이미 방에 있으면 이름을 바꾸도록 로그인 화면으로 (로그인 후 이 방으로 복귀)
             if (error.code === 'NAME_TAKEN') {
-                setTimeout(() => location.href = '/login?error=nameTaken', 1500);
+                setTimeout(() => location.href = `/login?error=nameTaken&redirect=/room/${roomCode}`, 1500);
+            }
+            // 강퇴됐거나 방이 사라졌으면 홈으로
+            if (error.code === 'KICKED' || error.code === 'ROOM_NOT_FOUND') {
+                leaving = true;
+                const reason = error.code === 'KICKED' ? 'kicked' : 'roomNotFound';
+                setTimeout(() => location.href = `/?error=${reason}`, 1500);
             }
         });
 
         // 방 입장 요청 (이름은 로그인 정보로 서버가 처리). 게임 중 재접속이면 손패 그대로 복귀
-        stompClient.send('/app/game/join', {});
+        stompClient.send(roomDest('join'), {});
     }, function (error) {
         connected = false;
+        if (leaving) return;
         // 로그인 세션이 만료된 경우 다시 로그인
         if (String(error).includes('로그인이 필요합니다')) {
             toast('로그인이 만료되었습니다. 다시 입장해주세요.', 'error');
-            setTimeout(() => location.href = '/login', 1500);
+            setTimeout(() => location.href = `/login?redirect=/room/${roomCode}`, 1500);
             return;
         }
         setConnection('bad', '재연결 중');
@@ -86,6 +95,11 @@ window.addEventListener('load', connect);
 function setConnection(state, text) {
     $('conn').className = 'conn ' + state;
     $('connText').textContent = text;
+}
+
+// 이 방의 메시지 경로 (방 코드를 모르면 조작할 수 없음)
+function roomDest(action) {
+    return `/app/room/${roomCode}/${action}`;
 }
 
 function send(destination, body) {
@@ -139,6 +153,22 @@ function onRoomState(next) {
     if (amWaiting(prev) && !amWaiting(next) && next.players.some(p => p.id === myPlayerId)) {
         toast('대기 끝! 다음 판부터 함께합니다', 'turn');
     }
+    if (prev && prev.hostId !== next.hostId) {
+        const msg = next.hostId === myPlayerId ? '👑 내가 방장이 되었습니다' : `👑 ${playerName(next.hostId)} 님이 방장이 되었습니다`;
+        log(msg);
+        toast(msg);
+    }
+    if (prev && JSON.stringify(prev.settings) !== JSON.stringify(next.settings)) {
+        const s = next.settings;
+        const grace = s.disconnectGraceSeconds % 60 === 0 ? `${s.disconnectGraceSeconds / 60}분` : `${s.disconnectGraceSeconds}초`;
+        const msg = `⚙️ 방 설정 변경: 대기 ${grace} · 최대 ${s.maxPlayers}명 · 게임 중 입장 ${s.allowLateJoin ? '허용' : '불가'}`;
+        log(msg);
+        toast(msg);
+    }
+    if (prev?.gameStarted && !next.gameStarted && !next.gameOver) {
+        log('⏹ 방장이 판을 중단했습니다.');
+        toast('방장이 판을 중단했습니다');
+    }
     if (!isMyTurn(prev) && isMyTurn(next)) {
         toast('내 차례입니다!', 'turn');
         if (navigator.vibrate) navigator.vibrate(150);
@@ -161,10 +191,14 @@ function amWaiting(r) {
     return !!(r && r.waitingPlayers.some(p => p.id === myPlayerId));
 }
 
-// 연결 끊긴 플레이어를 기다려주는 시간 (예: "3분", "90초")
+// 연결 끊긴 플레이어를 기다려주는 시간 (방 설정, 예: "3분", "30초")
 function graceText() {
-    const s = GAME_CONFIG.disconnectGraceSeconds;
+    const s = room.settings.disconnectGraceSeconds;
     return s % 60 === 0 ? `${s / 60}분` : `${s}초`;
+}
+
+function amHost(r) {
+    return !!(r && r.hostId === myPlayerId);
 }
 
 function isMyTurn(r) {
@@ -204,6 +238,9 @@ function render() {
     renderPlayers();
     renderHand();
     $('waitBanner').classList.toggle('active', amWaiting(room));
+    // 방장 전용 메뉴
+    $('menuSettings').classList.toggle('hidden', !amHost(room));
+    $('menuAbort').classList.toggle('hidden', !amHost(room) || !room.gameStarted);
     renderRevolutionBanner();
     renderTaxBanner();
     renderActions();
@@ -283,7 +320,7 @@ function renderStatus() {
         text.textContent = '🏁 게임 종료! 다음 판을 시작할 수 있습니다';
         trick.append(text);
     } else if (!room.gameStarted) {
-        text.textContent = `대기 중 — ${room.players.length}명 참여 (최소 ${MIN_PLAYERS}명)`;
+        text.textContent = `대기 중 — ${room.players.length}명 참여 (최소 ${MIN_PLAYERS}명). 🔗 초대 버튼으로 친구를 부르세요`;
         trick.append(text);
     } else if (room.seatDrawPhase) {
         const drawn = Object.keys(room.seatDraws).length;
@@ -372,7 +409,13 @@ function renderPlayers() {
         // 이름은 사용자 입력이므로 textContent 사용 (XSS 방지)
         const name = document.createElement('div');
         name.className = 'p-name';
-        name.textContent = p.name + (p.id === myPlayerId ? ' (나)' : '');
+        name.textContent = (p.id === room.hostId ? '👑 ' : '') + p.name + (p.id === myPlayerId ? ' (나)' : '');
+
+        // 방장은 다른 플레이어 칩을 탭해 방장 넘기기·강퇴
+        if (amHost(room) && p.id !== myPlayerId && !p.kicked) {
+            chip.style.cursor = 'pointer';
+            chip.onclick = () => openPlayerSheet(p);
+        }
 
         // 신분 · (작은 카드 뒷면) 남은 장수
         const meta = document.createElement('div');
@@ -391,16 +434,27 @@ function renderPlayers() {
         if (place >= 0) chip.append(badge(`🏅 ${place + 1}등`, 'var(--green)'));
         const taxToReturn = room.pendingTaxReturns[p.id];
         if (taxToReturn) chip.append(badge(`💰 ${taxToReturn}장 반환 대기`, 'var(--gold)'));
-        if (!p.connected) chip.append(badge(`연결 끊김 · ${graceText()} 후 자동 진행`, 'var(--muted)'));
+        if (p.kicked) chip.append(badge('🚫 강퇴됨 · 판 끝나면 퇴장', 'var(--accent)'));
+        else if (!p.connected) chip.append(badge(`연결 끊김 · ${graceText()} 후 자동 진행`, 'var(--muted)'));
 
         list.append(chip);
     });
 
-    // 다음 판 대기자 (이름은 사용자 입력이므로 textContent)
+    // 다음 판 대기자 (이름은 사용자 입력이므로 textContent). 방장은 탭해서 관리
     const waitingList = $('waitingList');
     const waiting = room.waitingPlayers;
     waitingList.classList.toggle('hidden', waiting.length === 0);
-    waitingList.textContent = `👀 다음 판 대기: ${waiting.map(p => p.name + (p.id === myPlayerId ? ' (나)' : '')).join(', ')}`;
+    waitingList.replaceChildren(document.createTextNode('👀 다음 판 대기: '));
+    waiting.forEach((p, i) => {
+        const el = document.createElement('span');
+        el.textContent = (p.id === room.hostId ? '👑 ' : '') + p.name + (p.id === myPlayerId ? ' (나)' : '');
+        if (amHost(room) && p.id !== myPlayerId) {
+            el.style.textDecoration = 'underline';
+            el.style.cursor = 'pointer';
+            el.onclick = () => openPlayerSheet(p);
+        }
+        waitingList.append(el, i < waiting.length - 1 ? ', ' : '');
+    });
 
     // 현재 차례인 플레이어가 보이도록 목록만 가로 스크롤 (scrollIntoView는 페이지 세로 스크롤까지 움직이므로 사용 안 함)
     const turnChip = list.querySelector('.turn');
@@ -564,9 +618,11 @@ function renderActions() {
     show('btnPlay', playing || waiting);
 
     if (lobby) {
+        // 게임 시작은 방장만
         $('btnStart').textContent = room.gameOver ? '다음 판 시작' : '게임 시작';
-        $('btnStart').disabled = !connected || room.players.length < MIN_PLAYERS;
-        hint = room.players.length < MIN_PLAYERS ? `최소 ${MIN_PLAYERS}명이 모여야 시작할 수 있습니다` : '';
+        $('btnStart').disabled = !connected || !amHost(room) || room.players.length < MIN_PLAYERS;
+        if (room.players.length < MIN_PLAYERS) hint = `최소 ${MIN_PLAYERS}명이 모여야 시작할 수 있습니다`;
+        else if (!amHost(room)) hint = `👑 방장(${playerName(room.hostId)})이 시작하길 기다리는 중`;
     } else if (canDraw) {
         $('btnDraw').disabled = !connected;
         hint = '카드를 뽑아 이번 판 신분을 정하세요';
@@ -605,15 +661,15 @@ function renderActions() {
 // ---------------- 액션 ----------------
 
 function startGame() {
-    send('/app/game/start');
+    send(roomDest('start'));
 }
 
 function drawSeatCard() {
-    send('/app/game/draw');
+    send(roomDest('draw'));
 }
 
 function decideRevolution(declare) {
-    send('/app/game/revolution', { declare });
+    send(roomDest('revolution'), { declare });
     log(declare ? '혁명 선언' : '혁명 선언하지 않음');
 }
 
@@ -623,7 +679,7 @@ function playSelectedCards() {
         toast('낼 카드를 선택하세요.', 'error');
         return;
     }
-    send('/app/game/play', { cards });
+    send(roomDest('play'), { cards });
     log(`카드 제출: ${cardList(cards)}`);
 }
 
@@ -634,13 +690,88 @@ function returnTax() {
         toast(`돌려줄 카드 ${count}장을 선택하세요.`, 'error');
         return;
     }
-    send('/app/game/tax', { cards });
+    send(roomDest('tax'), { cards });
     log(`세금 반환: ${cardList(cards)}`);
 }
 
 function passTurn() {
-    send('/app/game/pass');
+    send(roomDest('pass'));
     log('패스');
+}
+
+// ---------------- 초대 / 방장 ----------------
+
+// 초대 링크 공유: 모바일은 공유 시트(카톡 등), 지원하지 않으면 클립보드 복사
+async function shareInvite() {
+    const url = `${location.origin}/room/${roomCode}`;
+    if (navigator.share) {
+        try {
+            await navigator.share({ title: '달무티 같이 해요!', text: '달무티 방에 초대합니다', url });
+            return;
+        } catch (e) {
+            if (e.name === 'AbortError') return;  // 사용자가 공유 창을 닫음
+        }
+    }
+    try {
+        await navigator.clipboard.writeText(url);
+        toast('초대 링크를 복사했습니다');
+    } catch (e) {
+        // 클립보드 권한이 없는 환경(HTTP 등)에서는 직접 복사하도록 표시
+        window.prompt('초대 링크를 복사해 친구에게 보내세요', url);
+    }
+}
+
+let sheetTarget = null;  // 방장 메뉴 대상 플레이어
+
+function openPlayerSheet(p) {
+    sheetTarget = p;
+    $('playerSheetTitle').textContent = p.name;
+    $('btnTransferHost').disabled = !p.connected;
+    $('playerSheet').classList.remove('hidden');
+}
+
+function closeSheets() {
+    $('playerSheet').classList.add('hidden');
+    $('settingsSheet').classList.add('hidden');
+    sheetTarget = null;
+}
+
+function transferHost() {
+    if (!sheetTarget) return;
+    if (confirm(`${sheetTarget.name} 님에게 방장을 넘길까요?`)) send(roomDest('transfer-host'), { playerId: sheetTarget.id });
+    closeSheets();
+}
+
+function kickPlayer() {
+    if (!sheetTarget) return;
+    if (confirm(`${sheetTarget.name} 님을 강퇴할까요? 이 방에 다시 들어올 수 없습니다.`)) send(roomDest('kick'), { playerId: sheetTarget.id });
+    closeSheets();
+}
+
+function abortRound() {
+    $('userMenu').open = false;
+    if (confirm('진행 중인 판을 중단하고 대기실로 돌아갈까요? 신분은 판 시작 전으로 돌아갑니다.')) send(roomDest('abort'));
+}
+
+function openSettings() {
+    $('userMenu').open = false;
+    const s = room.settings;
+    $('setGrace').value = String(s.disconnectGraceSeconds);
+    const max = $('setMaxPlayers');
+    max.replaceChildren();
+    for (let n = MIN_PLAYERS; n <= 10; n++) max.append(new Option(`${n}명`, n));
+    max.value = String(s.maxPlayers);
+    $('setLateJoin').checked = s.allowLateJoin;
+    $('settingsSheet').classList.remove('hidden');
+}
+
+function saveSettings() {
+    send(roomDest('settings'), {
+        disconnectGraceSeconds: Number($('setGrace').value),
+        maxPlayers: Number($('setMaxPlayers').value),
+        allowLateJoin: $('setLateJoin').checked
+    });
+    closeSheets();
 }
 
 // ---------------- 알림 ----------------

@@ -7,6 +7,8 @@ import lombok.Getter;
 @Getter
 public class GameException extends RuntimeException {
     public static final String NAME_TAKEN = "NAME_TAKEN";
+    public static final String KICKED = "KICKED";
+    public static final String ROOM_NOT_FOUND = "ROOM_NOT_FOUND";
 
     private final String code;
 

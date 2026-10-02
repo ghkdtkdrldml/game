@@ -1,8 +1,8 @@
 package com.dalmuti.game;
 
+import com.dalmuti.game.service.GameService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import com.dalmuti.game.service.GameService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -23,6 +23,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -32,26 +34,30 @@ class GameWebSocketTest {
     @LocalServerPort
     int port;
 
+    @Autowired
+    GameService gameService;
+
     // 리다이렉트를 따라가지 않아야 302 응답과 쿠키를 직접 확인할 수 있음 (기본값 NEVER)
     private final HttpClient http = HttpClient.newHttpClient();
     private final List<StompSession> sessions = new ArrayList<>();
 
     // 플레이어 한 명의 접속과 수신함
     class Client {
+        final String cookie;
+        final String code;
         final StompSession session;
         final BlockingQueue<Map<?, ?>> states = new LinkedBlockingQueue<>();
         final BlockingQueue<Map<?, ?>> privates = new LinkedBlockingQueue<>();
         final BlockingQueue<Map<?, ?>> errors = new LinkedBlockingQueue<>();
 
-        Client(String name) throws Exception {
-            this(connect(login(name)));
-        }
 
-        Client(StompSession session) {
-            this.session = session;
+        Client(String cookie, String code) throws Exception {
+            this.cookie = cookie;
+            this.code = code;
+            this.session = connect(cookie);
             sessions.add(session);
 
-            subscribe("/topic/room", Map.class, states);
+            subscribe("/topic/room/" + code, Map.class, states);
             subscribe("/user/queue/private", Map.class, privates);
             subscribe("/user/queue/errors", Map.class, errors);
         }
@@ -71,22 +77,39 @@ class GameWebSocketTest {
             });
         }
 
-        void send(String destination) {
-            session.send(destination, Map.of());
+        void send(String action) {
+            send(action, Map.of());
+        }
+
+        void send(String action, Object payload) {
+            session.send("/app/room/" + code + "/" + action, payload);
+        }
+
+        void join() {
+            send("join");
         }
     }
 
+    // 새로 로그인한 사람으로 방에 연결
+    private Client guest(String name, String code) throws Exception {
+        return new Client(login(name), code);
+    }
+
+    // ---------- HTTP 도우미 ----------
+
     // 로그인 후 세션 쿠키 반환
     private String login(String name) throws Exception {
-        HttpResponse<String> res = postLogin(name, null);
+        HttpResponse<String> res = postLogin(name, null, null);
         assertEquals(302, res.statusCode());
         return res.headers().firstValue("Set-Cookie").orElseThrow().split(";")[0];
     }
 
-    private HttpResponse<String> postLogin(String name, String cookie) throws Exception {
+    private HttpResponse<String> postLogin(String name, String redirect, String cookie) throws Exception {
+        String body = "name=" + URLEncoder.encode(name, StandardCharsets.UTF_8)
+                + (redirect != null ? "&redirect=" + URLEncoder.encode(redirect, StandardCharsets.UTF_8) : "");
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(url("/login")))
                 .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString("name=" + URLEncoder.encode(name, StandardCharsets.UTF_8)));
+                .POST(HttpRequest.BodyPublishers.ofString(body));
         if (cookie != null) req.header("Cookie", cookie);
         return http.send(req.build(), HttpResponse.BodyHandlers.ofString());
     }
@@ -95,6 +118,27 @@ class GameWebSocketTest {
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(url(path))).GET();
         if (cookie != null) req.header("Cookie", cookie);
         return http.send(req.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> postCreateRoom(String cookie) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url("/rooms")))
+                .header("Cookie", cookie)
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+        return http.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    // 방 만들기 → 방 코드 반환
+    private String createRoom(String cookie) throws Exception {
+        String location = location(postCreateRoom(cookie));
+        assertTrue(location.startsWith("/room/"), location);
+        return location.substring("/room/".length());
+    }
+
+    private String location(HttpResponse<String> res) {
+        assertEquals(302, res.statusCode());
+        return URI.create(res.headers().firstValue("Location").orElseThrow()).getPath()
+                + Optional.ofNullable(URI.create(res.headers().firstValue("Location").orElseThrow()).getQuery()).map(q -> "?" + q).orElse("");
     }
 
     private StompSession connect(String cookie) throws Exception {
@@ -112,53 +156,76 @@ class GameWebSocketTest {
         return "http://localhost:" + port + path;
     }
 
-    @Autowired
-    GameService gameService;
-
-    // 방이 하나뿐이라 테스트끼리 공유하므로, 끝나면 전원 퇴장해 방이 초기화될 때까지 대기
+    // 방이 하나뿐이라 테스트끼리 공유하므로, 끝나면 전원 퇴장해 방이 비워질 때까지 대기
     @AfterEach
     void disconnect() throws InterruptedException {
         sessions.stream().filter(StompSession::isConnected).forEach(StompSession::disconnect);
         long deadline = System.currentTimeMillis() + 5000;
-        while (!gameService.getRoom().getPlayers().isEmpty()) {
-            if (System.currentTimeMillis() > deadline) fail("방이 초기화되지 않았습니다.");
+        while (gameService.currentRoom().map(r -> r.hasConnectedPlayers()).orElse(false)) {
+            if (System.currentTimeMillis() > deadline) fail("방이 비워지지 않았습니다.");
             Thread.sleep(50);
         }
     }
 
+    // ---------- 페이지 ----------
+
     @Test
-    void gamePageRequiresLogin() throws Exception {
-        HttpResponse<String> res = get("/game", null);
-        assertEquals(302, res.statusCode());
-        assertTrue(res.headers().firstValue("Location").orElseThrow().endsWith("/login"));
+    void pagesRequireLoginAndInviteLinkSurvivesLogin() throws Exception {
+        assertEquals("/login", location(get("/", null)));
+        assertEquals("/login?redirect=/room/abc123", location(get("/room/abc123", null)));
+
+        // 로그인 후 초대 링크로 돌아감. 방 링크가 아닌 주소로는 보내지 않음 (오픈 리다이렉트 방지)
+        assertEquals("/room/abc123", location(postLogin("링크손님", "/room/abc123", null)));
+        assertEquals("/", location(postLogin("악성", "https://evil.example", null)));
+    }
+
+    @Test
+    void homeShowsCreateButtonWhenNoRoom() throws Exception {
+        String cookie = login("새손님");
+        HttpResponse<String> res = get("/", cookie);
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("action=\"/rooms\""));
+
+        HttpResponse<String> kicked = get("/?error=kicked", cookie);
+        assertEquals(200, kicked.statusCode());
+        assertTrue(kicked.body().contains("방장에 의해 퇴장되었습니다."));
     }
 
     @Test
     void loginValidatesName() throws Exception {
-        HttpResponse<String> res = postLogin("   ", null);
+        HttpResponse<String> res = postLogin("   ", null, null);
         assertEquals(200, res.statusCode());
         assertTrue(res.body().contains("이름은 1~12자로 입력하세요."));
 
-        assertEquals(200, postLogin("1234567890123", null).statusCode());  // 13자
+        assertEquals(200, postLogin("1234567890123", null, null).statusCode());  // 13자
     }
 
     @Test
-    void gamePageShowsEscapedNameAndConfig() throws Exception {
+    void roomPageShowsEscapedNameAndConfig() throws Exception {
         String cookie = login("<b>홍길동</b>");
-        HttpResponse<String> res = get("/game", cookie);
+        String code = createRoom(cookie);
+        HttpResponse<String> res = get("/room/" + code, cookie);
         assertEquals(200, res.statusCode());
         assertTrue(res.body().contains("&lt;b&gt;홍길동&lt;/b&gt;"));
         assertFalse(res.body().contains("<b>홍길동</b>"));
+        assertTrue(res.body().contains("roomCode: \"" + code + "\""));
         // 카드 정보가 서버 enum에서 주입됨
         assertTrue(res.body().contains("\"DALMUTI\":{\"value\":1,\"name\":\"달무티\"}"), res.body());
     }
 
     @Test
+    void unknownRoomRedirectsHome() throws Exception {
+        String cookie = login("길잃음");
+        assertEquals("/?error=roomNotFound", location(get("/room/nope1234", cookie)));
+    }
+
+    @Test
     void renameKeepsPlayerId() throws Exception {
         String cookie = login("처음이름");
-        String before = extractPlayerId(get("/game", cookie).body());
-        assertEquals(302, postLogin("바꾼이름", cookie).statusCode());
-        String after = extractPlayerId(get("/game", cookie).body());
+        String code = createRoom(cookie);
+        String before = extractPlayerId(get("/room/" + code, cookie).body());
+        assertEquals(302, postLogin("바꾼이름", "/room/" + code, cookie).statusCode());
+        String after = extractPlayerId(get("/room/" + code, cookie).body());
         assertEquals(before, after);
     }
 
@@ -168,28 +235,43 @@ class GameWebSocketTest {
     }
 
     @Test
+    void secondRoomCannotBeCreatedWhileInUse() throws Exception {
+        String hostCookie = login("방장");
+        Client host = new Client(hostCookie, createRoom(hostCookie));
+        host.join();
+        awaitMatching(host.states, s -> players(s).size() == 1);
+
+        String other = login("다른사람");
+        assertEquals("/?error=roomBusy", location(postCreateRoom(other)));
+        // 참여 중인 사람에게는 홈에 돌아가기 링크
+        assertTrue(get("/", host.cookie).body().contains("/room/" + host.code));
+    }
+
+    // ---------- WebSocket ----------
+
+    @Test
     void webSocketRejectsWithoutLogin() {
         assertThrows(Exception.class, () -> connect(null));
     }
 
     @Test
     void handsArePrivateAndErrorsGoOnlyToSender() throws Exception {
-        Client a = new Client("A");
-        Client b = new Client("B");
+        String hostCookie = login("A");
+        String code = createRoom(hostCookie);
+        Client a = new Client(hostCookie, code);
+        Client b = guest("B", code);
 
-        a.send("/app/game/join");
-        b.send("/app/game/join");
+        a.join();
+        b.join();
         // 세션이 다르면 처리 순서가 보장되지 않으므로 두 명 입장을 확인한 뒤 시작
-        Map<?, ?> lobby = awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 2);
-        // 이름은 로그인 시 정한 값
-        assertEquals(Set.of("A", "B"), ((List<?>) lobby.get("players")).stream()
-                .map(p -> ((Map<?, ?>) p).get("name")).collect(java.util.stream.Collectors.toSet()));
+        Map<?, ?> lobby = awaitMatching(a.states, s -> players(s).size() == 2);
+        assertEquals(Set.of("A", "B"), players(lobby).stream().map(p -> p.get("name")).collect(Collectors.toSet()));
+
         // 공개 상태에는 손패 장수만 있고 카드 목록은 없음
         Map<?, ?> state = startFirstRound(a, a, b);
-        List<?> players = (List<?>) state.get("players");
+        List<Map<?, ?>> players = players(state);
         assertEquals(2, players.size());
-        for (Object p : players) {
-            Map<?, ?> player = (Map<?, ?>) p;
+        for (Map<?, ?> player : players) {
             assertFalse(player.containsKey("hand"));
             assertEquals(40, player.get("handCount"));
         }
@@ -201,12 +283,12 @@ class GameWebSocketTest {
 
         // 입장 순서는 보장되지 않으므로 실제 선 플레이어를 확인
         int turn = (Integer) state.get("currentTurnIndex");
-        boolean aHasTurn = "A".equals(((Map<?, ?>) players.get(turn)).get("name"));
+        boolean aHasTurn = "A".equals(players.get(turn).get("name"));
         Client onTurn = aHasTurn ? a : b;
         Client notOnTurn = aHasTurn ? b : a;
 
         // 턴이 아닌 플레이어가 패스 → 그 플레이어에게만 오류
-        notOnTurn.send("/app/game/pass");
+        notOnTurn.send("pass");
         Map<?, ?> error = notOnTurn.errors.poll(5, TimeUnit.SECONDS);
         assertNotNull(error);
         assertEquals("내 턴이 아닙니다.", error.get("message"));
@@ -214,25 +296,65 @@ class GameWebSocketTest {
     }
 
     @Test
-    void lobbyDisconnectIsBroadcast() throws Exception {
-        Client a = new Client("A");
-        Client b = new Client("B");
+    void onlyHostCanStartAndHostCanKick() throws Exception {
+        String hostCookie = login("방장");
+        String code = createRoom(hostCookie);
+        Client host = new Client(hostCookie, code);
+        Client guest = guest("손님", code);
+        host.join();
+        awaitMatching(host.states, s -> players(s).size() == 1);
+        guest.join();
+        Map<?, ?> lobby = awaitMatching(host.states, s -> players(s).size() == 2);
+        String guestId = players(lobby).stream().filter(p -> "손님".equals(p.get("name"))).findFirst().orElseThrow().get("id").toString();
+        assertEquals(extractPlayerId(get("/room/" + code, hostCookie).body()), lobby.get("hostId"));
 
-        a.send("/app/game/join");
-        b.send("/app/game/join");
-        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 2);
+        guest.send("start");
+        assertEquals("방장만 할 수 있습니다.", guest.errors.poll(5, TimeUnit.SECONDS).get("message"));
+
+        host.send("kick", Map.of("playerId", guestId));
+        Map<?, ?> kicked = guest.errors.poll(5, TimeUnit.SECONDS);
+        assertNotNull(kicked);
+        assertEquals("KICKED", kicked.get("code"));
+        awaitMatching(host.states, s -> players(s).size() == 1);
+
+        // 강퇴된 사람은 다시 들어올 수 없음
+        guest.join();
+        assertEquals("KICKED", guest.errors.poll(5, TimeUnit.SECONDS).get("code"));
+    }
+
+    @Test
+    void wrongRoomCodeIsRejectedOverWebSocket() throws Exception {
+        String code = createRoom(login("방장2"));
+        Client stranger = guest("낯선사람", code + "x");
+        stranger.join();
+        Map<?, ?> error = stranger.errors.poll(5, TimeUnit.SECONDS);
+        assertNotNull(error);
+        assertEquals("ROOM_NOT_FOUND", error.get("code"));
+    }
+
+    @Test
+    void lobbyDisconnectIsBroadcast() throws Exception {
+        String hostCookie = login("A");
+        String code = createRoom(hostCookie);
+        Client a = new Client(hostCookie, code);
+        Client b = guest("B", code);
+
+        a.join();
+        b.join();
+        awaitMatching(a.states, s -> players(s).size() == 2);
 
         b.session.disconnect();
-        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 1);
+        awaitMatching(a.states, s -> players(s).size() == 1);
     }
 
     @Test
     void loginRejectsNameAlreadyInRoom() throws Exception {
-        Client a = new Client("홍길동");
-        a.send("/app/game/join");
-        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 1);
+        String hostCookie = login("홍길동");
+        Client a = new Client(hostCookie, createRoom(hostCookie));
+        a.join();
+        awaitMatching(a.states, s -> players(s).size() == 1);
 
-        HttpResponse<String> res = postLogin(" 홍길동 ", null);
+        HttpResponse<String> res = postLogin(" 홍길동 ", null, null);
         assertEquals(200, res.statusCode());
         assertTrue(res.body().contains("이미 사용 중인 이름입니다"));
     }
@@ -240,12 +362,14 @@ class GameWebSocketTest {
     // 둘 다 입장 전에 같은 이름으로 로그인한 경우: 나중에 입장한 쪽이 NAME_TAKEN 오류를 받음
     @Test
     void joinRejectsDuplicateNameRace() throws Exception {
-        Client first = new Client("철수");
-        Client second = new Client("철수");
+        String firstCookie = login("철수");
+        String code = createRoom(firstCookie);
+        Client first = new Client(firstCookie, code);
+        Client second = guest("철수", code);
 
-        first.send("/app/game/join");
-        awaitMatching(first.states, s -> ((List<?>) s.get("players")).size() == 1);
-        second.send("/app/game/join");
+        first.join();
+        awaitMatching(first.states, s -> players(s).size() == 1);
+        second.join();
 
         Map<?, ?> error = second.errors.poll(5, TimeUnit.SECONDS);
         assertNotNull(error);
@@ -254,19 +378,21 @@ class GameWebSocketTest {
 
     @Test
     void joiningDuringGameWaitsAndSpectates() throws Exception {
-        Client a = new Client("A");
-        Client b = new Client("B");
-        a.send("/app/game/join");
-        b.send("/app/game/join");
-        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 2);
-        a.send("/app/game/start");
+        String hostCookie = login("A");
+        String code = createRoom(hostCookie);
+        Client a = new Client(hostCookie, code);
+        Client b = guest("B", code);
+        a.join();
+        b.join();
+        awaitMatching(a.states, s -> players(s).size() == 2);
+        a.send("start");
         awaitMatching(a.states, s -> Boolean.TRUE.equals(s.get("gameStarted")));
 
-        Client c = new Client("C");
-        c.send("/app/game/join");
+        Client c = guest("C", code);
+        c.join();
         // 관전자도 방 상태를 받고, 대기 목록에 표시됨
         Map<?, ?> state = awaitMatching(c.states, s -> ((List<?>) s.get("waitingPlayers")).size() == 1);
-        assertEquals(2, ((List<?>) state.get("players")).size());
+        assertEquals(2, players(state).size());
         assertTrue((Boolean) state.get("gameStarted"));
         // 개인 상태도 받지만 손패는 없음
         Map<?, ?> cPrivate = awaitMatching(c.privates, m -> true);
@@ -277,43 +403,51 @@ class GameWebSocketTest {
     @Test
     void refreshDuringGameRestoresPlayer() throws Exception {
         String cookieA = login("A");
-        Client a = new Client(connect(cookieA));
-        Client b = new Client("B");
+        String code = createRoom(cookieA);
+        Client a = new Client(cookieA, code);
+        Client b = guest("B", code);
 
-        a.send("/app/game/join");
-        b.send("/app/game/join");
-        awaitMatching(b.states, s -> ((List<?>) s.get("players")).size() == 2);
-        startFirstRound(b, a, b);
+        a.join();
+        b.join();
+        awaitMatching(b.states, s -> players(s).size() == 2);
+        startFirstRound(a, a, b);
         List<?> handBefore = (List<?>) awaitMatching(a.privates, m -> !((List<?>) m.get("hand")).isEmpty()).get("hand");
 
         // 새로고침 = 연결 끊김 → 다른 플레이어에게 연결 끊김으로 표시
         a.session.disconnect();
-        awaitMatching(b.states, s -> ((List<?>) s.get("players")).stream()
-                .anyMatch(p -> "A".equals(((Map<?, ?>) p).get("name")) && Boolean.FALSE.equals(((Map<?, ?>) p).get("connected"))));
+        awaitMatching(b.states, s -> players(s).stream()
+                .anyMatch(p -> "A".equals(p.get("name")) && Boolean.FALSE.equals(p.get("connected"))));
 
         // 같은 쿠키로 재연결 후 입장
-        Client aAgain = new Client(connect(cookieA));
-        aAgain.send("/app/game/join");
+        Client aAgain = new Client(cookieA, code);
+        aAgain.join();
         Map<?, ?> restored = awaitMatching(aAgain.privates, m -> !((List<?>) m.get("hand")).isEmpty());
         assertEquals(handBefore, restored.get("hand"));
-        Map<?, ?> state = awaitMatching(b.states, s -> ((List<?>) s.get("players")).stream()
-                .allMatch(p -> Boolean.TRUE.equals(((Map<?, ?>) p).get("connected"))));
-        assertEquals(2, ((List<?>) state.get("players")).size());
+        Map<?, ?> state = awaitMatching(b.states, s -> players(s).stream()
+                .allMatch(p -> Boolean.TRUE.equals(p.get("connected"))));
+        assertEquals(2, players(state).size());
         assertTrue((Boolean) state.get("gameStarted"));
     }
 
-    // 첫 판 시작: 자리 뽑기 후 전원이 카드를 뽑아 배분까지 끝난 상태를 반환
-    private Map<?, ?> startFirstRound(Client starter, Client... all) throws InterruptedException {
-        starter.send("/app/game/start");
+    // ---------- 도우미 ----------
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<?, ?>> players(Map<?, ?> state) {
+        return (List<Map<?, ?>>) state.get("players");
+    }
+
+    // 첫 판 시작(방장): 자리 뽑기 후 전원이 카드를 뽑아 배분까지 끝난 상태를 반환
+    private Map<?, ?> startFirstRound(Client host, Client... all) throws InterruptedException {
+        host.send("start");
         for (Client c : all) {
             awaitMatching(c.states, s -> Boolean.TRUE.equals(s.get("seatDrawPhase")));
-            c.send("/app/game/draw");
+            c.send("draw");
         }
-        return awaitMatching(starter.states,
+        return awaitMatching(host.states,
                 s -> Boolean.TRUE.equals(s.get("gameStarted")) && Boolean.FALSE.equals(s.get("seatDrawPhase")));
     }
 
-    private static <T> T awaitMatching(BlockingQueue<T> queue, java.util.function.Predicate<T> condition) throws InterruptedException {
+    private static <T> T awaitMatching(BlockingQueue<T> queue, Predicate<T> condition) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 5000;
         while (System.currentTimeMillis() < deadline) {
             T item = queue.poll(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);

@@ -17,6 +17,8 @@
         <p>게임에서 사용할 이름을 정해주세요. (1~12자)</p>
 
         <div class="error" th:if="${error}" th:text="${error}">오류 메시지</div>
+        <!-- 초대 링크로 들어온 경우 로그인 후 그 방으로 -->
+        <input type="hidden" name="redirect" th:value="${redirect}">
 
         <input type="text" name="name" th:value="${name}" placeholder="이름" maxlength="12"
                autocomplete="nickname" enterkeyhint="go" required autofocus>

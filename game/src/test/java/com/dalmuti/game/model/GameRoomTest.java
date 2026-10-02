@@ -20,6 +20,136 @@ class GameRoomTest {
         return room;
     }
 
+    // ---------- 방장 ----------
+
+    private GameRoom lobby(String... ids) {
+        GameRoom room = new GameRoom();
+        for (String id : ids) room.addPlayer(new Player(id, id));
+        return room;
+    }
+
+    @Test
+    void firstJoinerIsHostAndOnlyHostCanStart() {
+        GameRoom room = lobby("a", "b");
+        assertEquals("a", room.getHostId());
+        assertThrows(GameException.class, () -> room.startGame("b"));
+        assertDoesNotThrow(() -> room.startGame("a"));
+    }
+
+    @Test
+    void hostCanTransferToConnectedMember() {
+        GameRoom room = lobby("a", "b", "c");
+        assertThrows(GameException.class, () -> room.transferHost("b", "c"));  // 방장만
+        room.transferHost("a", "b");
+        assertEquals("b", room.getHostId());
+        assertThrows(GameException.class, () -> room.transferHost("b", "x"));  // 방에 없는 사람
+    }
+
+    @Test
+    void hostLeavingLobbyPassesHostImmediately() {
+        GameRoom room = lobby("a", "b", "c");
+        room.disconnectPlayer("a", T0);
+        assertEquals("b", room.getHostId());  // 가장 먼저 들어온 접속자
+    }
+
+    @Test
+    void hostDisconnectedInGamePassesHostAfterGrace() {
+        GameRoom room = startedRoom("a", "b", "c");
+        room.disconnectPlayer("a", T0);
+
+        assertFalse(room.updateHost(T0.plusSeconds(14), GRACE));
+        assertEquals("a", room.getHostId());
+        assertTrue(room.updateHost(T0.plus(GRACE), GRACE));
+        assertEquals("b", room.getHostId());
+    }
+
+    @Test
+    void kickInLobbyRemovesAndBlocksRejoin() {
+        GameRoom room = lobby("a", "b");
+        assertThrows(GameException.class, () -> room.kick("b", "a"));  // 방장만
+        assertThrows(GameException.class, () -> room.kick("a", "a"));  // 자기 자신 불가
+
+        room.kick("a", "b");
+        assertEquals(List.of("a"), seatOrder(room));
+        GameException e = assertThrows(GameException.class, () -> room.addPlayer(new Player("b", "b")));
+        assertEquals(GameException.KICKED, e.getCode());
+    }
+
+    @Test
+    void kickWaitingPlayerRemovesImmediately() {
+        GameRoom room = startedRoom("a", "b");
+        room.addPlayer(new Player("c", "c"));
+        room.kick("a", "c");
+        assertTrue(room.getWaitingPlayers().isEmpty());
+    }
+
+    @Test
+    void kickDuringGameAutoPassesThenRemovesAtRoundEnd() {
+        GameRoom room = startedRoom("a", "b", "c");
+        setHand(room, 0, COOK, PEASANT);
+        setHand(room, 1, PEASANT);
+        setHand(room, 2, KNIGHT);
+
+        room.playCards("a", List.of(COOK));
+        room.kick("a", "b");  // b 차례에 강퇴
+
+        assertTrue(player(room, "b").isKicked());
+        assertThrows(GameException.class, () -> room.pass("b"));  // 강퇴된 사람은 조작 불가
+        // 유예 시간 없이 바로 자동 패스
+        assertTrue(room.actForAwayPlayers(T0, GRACE));
+        assertEquals(2, room.getCurrentTurnIndex());
+
+        room.playCards("c", List.of(KNIGHT));  // c 1등
+        room.pass("a");                         // 12로는 6을 못 이김 → b 차례
+        room.actForAwayPlayers(T0, GRACE);      // b 자동 패스 → 바닥 비우고 a가 선
+        room.playCards("a", List.of(PEASANT));  // a 2등, b 꼴찌로 종료
+        assertTrue(room.isGameOver());
+        assertEquals(List.of("a", "c"), room.getPlayers().stream().map(Player::getId).sorted().toList());
+    }
+
+    @Test
+    void abortRoundRestoresRanksAndReturnsToLobby() {
+        GameRoom room = rankedRoom();
+        room.startGame("d", SERF_GETS_JESTERS);
+        room.decideRevolution("s", true);  // 대혁명으로 신분이 뒤집힌 상태
+        room.addPlayer(new Player("w", "w"));  // 관전자
+        room.disconnectPlayer("tf", T0);
+
+        assertThrows(GameException.class, () -> room.abortRound("pm"));  // 방장만
+        room.abortRound("d");
+
+        assertFalse(room.isGameStarted());
+        assertFalse(room.isGameOver());
+        assertEquals(Rank.GREAT_DALMUTI, player(room, "d").getRank());  // 판 시작 전 신분으로
+        assertEquals(Rank.SERF, player(room, "s").getRank());
+        assertTrue(room.getPlayers().stream().allMatch(p -> p.getHand().isEmpty()));
+        // 끊긴 플레이어(tf) 정리, 관전자(w, 평민) 합류, 신분 순 정렬
+        assertEquals(List.of("d", "pm", "w", "s"), seatOrder(room));
+    }
+
+    @Test
+    void settingsAreHostOnlyAndValidated() {
+        GameRoom room = lobby("a", "b", "c");
+        RoomSettings strict = new RoomSettings(Duration.ofSeconds(30), 4, false);
+        assertThrows(GameException.class, () -> room.updateSettings("b", strict));
+        room.updateSettings("a", strict);
+
+        assertThrows(GameException.class, () -> room.updateSettings("a", new RoomSettings(Duration.ofSeconds(30), 2, true)));  // 현재 3명
+        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(5), 4, true));
+        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(30), 11, true));
+
+        // 게임 중 입장 불가 설정
+        room.startGame("a");
+        assertThrows(GameException.class, () -> room.addPlayer(new Player("d", "d")));
+    }
+
+    @Test
+    void maxPlayersSettingLimitsJoin() {
+        GameRoom room = lobby("a", "b");
+        room.updateSettings("a", new RoomSettings(Duration.ofMinutes(1), 2, true));
+        assertThrows(GameException.class, () -> room.addPlayer(new Player("c", "c")));
+    }
+
     // ---------- 자리 뽑기 (첫 판 신분 정하기) ----------
 
     @Test
@@ -259,7 +389,7 @@ class GameRoomTest {
         assertEquals(Rank.CITIZEN, room.getPlayers().get(2).getRank());
 
         // 다음 판에는 3명 모두 카드를 받음
-        room.startGame("c");
+        room.startGame("a");
         assertTrue(room.getPlayers().stream().noneMatch(p -> p.getHand().isEmpty()));
     }
 

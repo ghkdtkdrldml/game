@@ -5,12 +5,16 @@ import com.dalmuti.game.model.GameRoom;
 import com.dalmuti.game.model.Player;
 import com.dalmuti.game.model.Rank;
 import com.dalmuti.game.model.Revolution;
+import com.dalmuti.game.model.RoomSettings;
 
 import java.util.List;
 import java.util.Map;
 
 // 방 전체에 공개되는 상태. 손패 내용은 제외하고 장수만 포함
 public record RoomState(
+        String code,
+        String hostId,
+        SettingsView settings,
         List<PlayerView> players,
         // 게임 도중 들어와 다음 판을 기다리는 사람
         List<PlayerView> waitingPlayers,
@@ -32,14 +36,24 @@ public record RoomState(
         boolean seatDrawPhase,
         Map<String, CardType> seatDraws
 ) {
-    public record PlayerView(String id, String name, Rank rank, int handCount, boolean connected) {
+    // kicked: 게임 중 강퇴되어 이번 판은 자동 패스, 판이 끝나면 제거됨
+    public record PlayerView(String id, String name, Rank rank, int handCount, boolean connected, boolean kicked) {
         static PlayerView from(Player p) {
-            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getHand().size(), p.isConnected());
+            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getHand().size(), p.isConnected(), p.isKicked());
+        }
+    }
+
+    public record SettingsView(long disconnectGraceSeconds, int maxPlayers, boolean allowLateJoin) {
+        static SettingsView from(RoomSettings s) {
+            return new SettingsView(s.disconnectGrace().toSeconds(), s.maxPlayers(), s.allowLateJoin());
         }
     }
 
     public static RoomState from(GameRoom room) {
         return new RoomState(
+                room.getCode(),
+                room.getHostId(),
+                SettingsView.from(room.getSettings()),
                 room.getPlayers().stream().map(PlayerView::from).toList(),
                 room.getWaitingPlayers().stream().map(PlayerView::from).toList(),
                 room.getCurrentTurnIndex(),

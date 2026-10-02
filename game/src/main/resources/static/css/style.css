@@ -430,4 +430,53 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .login-box input { width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 10px; border: 1px solid var(--panel-2); background: var(--panel-2); color: #fff; }
 .login-box button { width: 100%; }
 .credit { text-align: center; font-size: 11px; color: var(--muted); margin-top: 16px; }
+
+/* ---------- 홈 (방 만들기) ---------- */
+.home-box { padding-top: 6vh; }
+.home-box h3 { margin-bottom: 6px; }
+.home-box p { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+.home-box button, .btn-link { width: 100%; }
+.btn-link {
+    display: block;
+    min-height: 44px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: bold;
+    text-align: center;
+    text-decoration: none;
+}
+.error-panel { border-color: var(--accent); color: var(--accent); font-weight: bold; }
+
+/* ---------- 바텀 시트 (방장 메뉴, 방 설정) ---------- */
+.sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+.sheet {
+    width: 100%;
+    max-width: 480px;
+    background: var(--panel);
+    border-top: 1px solid var(--panel-2);
+    border-radius: 16px 16px 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.sheet h3 { font-size: 17px; margin-bottom: 4px; }
+.sheet label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 15px; }
+.sheet select { font-size: 16px; padding: 8px; border-radius: 8px; background: var(--panel-2); color: #fff; border: 1px solid #454b66; }
+.sheet input[type=checkbox] { width: 22px; height: 22px; }
+.sheet .sheet-note { font-size: 12px; color: var(--muted); }
+
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.invite-btn { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: 18px; background: var(--panel-2); color: var(--gold-light); }
+.host-crown { color: var(--gold-light); }
 .credit a { color: var(--muted); }

@@ -1,55 +1,105 @@
 package com.dalmuti.game.controller;
 
 import com.dalmuti.game.auth.PlayerPrincipal;
+import com.dalmuti.game.exception.GameException;
 import com.dalmuti.game.model.CardType;
 import com.dalmuti.game.model.Rank;
 import com.dalmuti.game.service.GameService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.SessionAttribute;
+import org.springframework.web.bind.annotation.*;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
+// 흐름: 로그인(이름) → 홈(방 만들기 / 참여 중인 방으로) → /room/{code} (초대 링크)
+// 초대 링크로 들어왔는데 로그인 전이면 로그인 후 그 링크로 돌아감
 @Controller
 @RequiredArgsConstructor
 public class PageController {
 
     private static final int MAX_NAME_LENGTH = 12;
     private static final String NAME_TAKEN_MESSAGE = "이미 사용 중인 이름입니다. 다른 이름을 입력하세요.";
+    // 로그인 후 돌아갈 주소는 방 링크만 허용 (외부 주소로 보내는 오픈 리다이렉트 방지)
+    private static final Pattern ROOM_PATH = Pattern.compile("^/room/[A-Za-z0-9]{1,16}$");
+
+    private static final Map<String, String> HOME_MESSAGES = Map.of(
+            "roomNotFound", "방이 없습니다. 링크를 확인하거나 새 방을 만드세요.",
+            "roomBusy", "이미 진행 중인 방이 있습니다. 초대 링크를 받아 입장하세요.",
+            "kicked", "방장에 의해 퇴장되었습니다.");
 
     private final GameService gameService;
 
-    @Value("${game.disconnect-grace}")
-    private Duration disconnectGrace;
-
     // 페이지 조회는 @SessionAttribute로 읽어, 로그인하지 않은 방문에 불필요한 세션을 만들지 않음
     @GetMapping("/")
-    public String home(@SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player) {
-        return player != null ? "redirect:/game" : "redirect:/login";
+    public String home(@SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player,
+                       @RequestParam(required = false) String error, Model model) {
+        if (player == null) return "redirect:/login";
+
+        model.addAttribute("playerName", player.playerName());
+        model.addAttribute("error", error != null ? HOME_MESSAGES.get(error) : null);
+        // 지금 있는 방: 내가 참여 중이면 돌아가기, 다른 사람들 방이면 만들기 불가 안내
+        // (템플릿 조건식에서 null이 boolean으로 변환되지 않도록 기본값 지정)
+        model.addAttribute("roomBusy", false);
+        gameService.currentRoom().ifPresent(room -> {
+            synchronized (room) {
+                boolean member = room.allMembers().stream().anyMatch(p -> p.getId().equals(player.playerId()));
+                if (member) model.addAttribute("myRoomCode", room.getCode());
+                else if (room.hasConnectedPlayers()) model.addAttribute("roomBusy", true);
+            }
+        });
+        return "home";
+    }
+
+    @PostMapping("/rooms")
+    public String createRoom(@SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player) {
+        if (player == null) return "redirect:/login";
+        try {
+            return "redirect:/room/" + gameService.createRoom(player.playerId());
+        } catch (GameException e) {
+            return "redirect:/?error=roomBusy";
+        }
+    }
+
+    @GetMapping("/room/{code}")
+    public String room(@PathVariable String code,
+                       @SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player,
+                       Model model) {
+        if (player == null) return "redirect:/login?redirect=/room/" + code;
+        if (gameService.currentRoom().filter(r -> r.getCode().equals(code)).isEmpty()) {
+            return "redirect:/?error=roomNotFound";
+        }
+
+        model.addAttribute("roomCode", code);
+        model.addAttribute("playerId", player.playerId());
+        model.addAttribute("playerName", player.playerName());
+        model.addAttribute("cards", cards());
+        model.addAttribute("rankNames", rankNames());
+        return "game";
     }
 
     // nameTaken: 게임 화면에서 입장하다 이름 중복으로 돌아온 경우
     @GetMapping("/login")
     public String loginPage(@SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player,
-                            @RequestParam(required = false) String error, Model model) {
+                            @RequestParam(required = false) String error,
+                            @RequestParam(required = false) String redirect, Model model) {
         if (player != null) model.addAttribute("name", player.playerName());
         if ("nameTaken".equals(error)) model.addAttribute("error", NAME_TAKEN_MESSAGE);
+        model.addAttribute("redirect", safeRedirect(redirect));
         return "login";
     }
 
     @PostMapping("/login")
-    public String login(@RequestParam(defaultValue = "") String name, HttpSession session, Model model) {
+    public String login(@RequestParam(defaultValue = "") String name, @RequestParam(required = false) String redirect,
+                        HttpSession session, Model model) {
         String trimmed = name.strip();
+        String target = safeRedirect(redirect);
         model.addAttribute("name", trimmed);
+        model.addAttribute("redirect", target);
         if (trimmed.isEmpty() || trimmed.length() > MAX_NAME_LENGTH) {
             model.addAttribute("error", "이름은 1~" + MAX_NAME_LENGTH + "자로 입력하세요.");
             return "login";
@@ -63,7 +113,7 @@ public class PageController {
         }
         String playerId = current != null ? current.playerId() : UUID.randomUUID().toString();
         session.setAttribute(PlayerPrincipal.SESSION_KEY, new PlayerPrincipal(playerId, trimmed));
-        return "redirect:/game";
+        return "redirect:" + target;
     }
 
     @PostMapping("/logout")
@@ -72,17 +122,8 @@ public class PageController {
         return "redirect:/login";
     }
 
-    @GetMapping("/game")
-    public String game(@SessionAttribute(name = PlayerPrincipal.SESSION_KEY, required = false) PlayerPrincipal player,
-                       Model model) {
-        if (player == null) return "redirect:/login";
-
-        model.addAttribute("playerId", player.playerId());
-        model.addAttribute("playerName", player.playerName());
-        model.addAttribute("cards", cards());
-        model.addAttribute("rankNames", rankNames());
-        model.addAttribute("disconnectGraceSeconds", disconnectGrace.toSeconds());
-        return "game";
+    private String safeRedirect(String redirect) {
+        return redirect != null && ROOM_PATH.matcher(redirect).matches() ? redirect : "/";
     }
 
     private PlayerPrincipal currentPlayer(HttpSession session) {

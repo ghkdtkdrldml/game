@@ -2,17 +2,13 @@
 package com.dalmuti.game.controller;
 
 import com.dalmuti.game.auth.PlayerPrincipal;
-import com.dalmuti.game.dto.ActionRequest;
-import com.dalmuti.game.dto.ErrorMessage;
-import com.dalmuti.game.dto.PrivateState;
-import com.dalmuti.game.dto.RevolutionRequest;
-import com.dalmuti.game.dto.RoomState;
+import com.dalmuti.game.dto.*;
 import com.dalmuti.game.exception.GameException;
 import com.dalmuti.game.model.GameRoom;
 import com.dalmuti.game.model.Player;
+import com.dalmuti.game.model.RoomSettings;
 import com.dalmuti.game.service.GameService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.handler.annotation.*;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -25,102 +21,109 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import java.security.Principal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.function.BiConsumer;
 
-// 방은 하나뿐이므로 경로에 방 ID 없음
+// 방 코드가 경로에 들어가므로 초대 링크(코드)를 모르면 방 상태를 구독하거나 조작할 수 없음
 @Controller
 @RequiredArgsConstructor
 public class GameController {
 
-    private static final String ROOM_TOPIC = "/topic/room";
-
     private final GameService gameService;
     private final SimpMessagingTemplate messagingTemplate;
 
-    // 연결이 끊긴 플레이어를 기다려주는 시간. 지나면 자동 패스 등으로 대신 진행 (application.yaml)
-    @Value("${game.disconnect-grace}")
-    private Duration disconnectGrace;
-
-    @MessageMapping("/game/join")
-    public void joinRoom(Principal principal, SimpMessageHeaderAccessor headerAccessor) {
+    @MessageMapping("/room/{code}/join")
+    public void joinRoom(@DestinationVariable String code, Principal principal, SimpMessageHeaderAccessor headerAccessor) {
         requirePlayerId(principal);
         // 이름은 요청 본문이 아니라 로그인 시 정한 값을 사용
         PlayerPrincipal player = (PlayerPrincipal) principal;
-        GameRoom room = gameService.join(new Player(player.playerId(), player.playerName()), headerAccessor.getSessionId());
+        GameRoom room = gameService.join(code, new Player(player.playerId(), player.playerName()), headerAccessor.getSessionId());
         // 상태 직렬화(전송)를 방 락 안에서 처리해 중간 상태가 전송되지 않도록 함
         synchronized (room) {
             broadcast(room);
         }
     }
 
-    @MessageMapping("/game/start")
-    public void startGame(Principal principal) {
+    @MessageMapping("/room/{code}/start")
+    public void startGame(@DestinationVariable String code, Principal principal) {
+        act(code, principal, (room, playerId) -> room.startGame(playerId));
+    }
+
+    @MessageMapping("/room/{code}/draw")
+    public void drawSeatCard(@DestinationVariable String code, Principal principal) {
+        act(code, principal, (room, playerId) -> room.drawSeatCard(playerId));
+    }
+
+    @MessageMapping("/room/{code}/revolution")
+    public void decideRevolution(@DestinationVariable String code, RevolutionRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.decideRevolution(playerId, request.declare()));
+    }
+
+    @MessageMapping("/room/{code}/tax")
+    public void returnTax(@DestinationVariable String code, ActionRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.returnTax(playerId, request.getCards()));
+    }
+
+    @MessageMapping("/room/{code}/play")
+    public void playCards(@DestinationVariable String code, ActionRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.playCards(playerId, request.getCards()));
+    }
+
+    @MessageMapping("/room/{code}/pass")
+    public void passTurn(@DestinationVariable String code, Principal principal) {
+        act(code, principal, (room, playerId) -> room.pass(playerId));
+    }
+
+    // ---------- 방장 전용 ----------
+
+    @MessageMapping("/room/{code}/kick")
+    public void kick(@DestinationVariable String code, TargetRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> {
+            room.kick(playerId, request.playerId());
+            // 강퇴된 사람에게 알려 화면을 나가게 함
+            messagingTemplate.convertAndSendToUser(request.playerId(), "/queue/errors",
+                    new ErrorMessage(GameException.KICKED, "방장에 의해 퇴장되었습니다."));
+        });
+    }
+
+    @MessageMapping("/room/{code}/transfer-host")
+    public void transferHost(@DestinationVariable String code, TargetRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.transferHost(playerId, request.playerId()));
+    }
+
+    @MessageMapping("/room/{code}/abort")
+    public void abortRound(@DestinationVariable String code, Principal principal) {
+        act(code, principal, (room, playerId) -> room.abortRound(playerId));
+    }
+
+    @MessageMapping("/room/{code}/settings")
+    public void updateSettings(@DestinationVariable String code, SettingsRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.updateSettings(playerId, new RoomSettings(
+                Duration.ofSeconds(request.disconnectGraceSeconds()), request.maxPlayers(), request.allowLateJoin())));
+    }
+
+    // 방을 찾아 방 락 안에서 처리하고 상태를 전송
+    private void act(String code, Principal principal, BiConsumer<GameRoom, String> action) {
         String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
+        GameRoom room = gameService.getRoom(code);
         synchronized (room) {
-            room.startGame(playerId);
+            action.accept(room, playerId);
             broadcast(room);
         }
     }
 
-    @MessageMapping("/game/draw")
-    public void drawSeatCard(Principal principal) {
-        String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            room.drawSeatCard(playerId);
-            broadcast(room);
-        }
-    }
-
-    @MessageMapping("/game/revolution")
-    public void decideRevolution(RevolutionRequest request, Principal principal) {
-        String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            room.decideRevolution(playerId, request.declare());
-            broadcast(room);
-        }
-    }
-
-    @MessageMapping("/game/tax")
-    public void returnTax(ActionRequest request, Principal principal) {
-        String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            room.returnTax(playerId, request.getCards());
-            broadcast(room);
-        }
-    }
-
-    @MessageMapping("/game/play")
-    public void playCards(ActionRequest request, Principal principal) {
-        String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            room.playCards(playerId, request.getCards());
-            broadcast(room);
-        }
-    }
-
-    @MessageMapping("/game/pass")
-    public void passTurn(Principal principal) {
-        String playerId = requirePlayerId(principal);
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            room.pass(playerId);
-            broadcast(room);
-        }
-    }
-
-    // 연결이 끊긴 플레이어 차례에 게임이 멈추지 않도록 주기적으로 대신 진행 (새로고침 등을 고려해 유예 시간 후)
+    // 연결이 끊긴 플레이어 차례에 게임이 멈추지 않도록 대신 진행하고, 방장 부재 시 다음 사람에게 넘김
+    // (방 설정의 유예 시간이 지난 뒤)
     @Scheduled(fixedDelay = 1000)
-    public void actForAwayPlayers() {
-        GameRoom room = gameService.getRoom();
-        synchronized (room) {
-            if (room.actForAwayPlayers(Instant.now(), disconnectGrace)) {
-                broadcast(room);
+    public void tick() {
+        gameService.currentRoom().ifPresent(room -> {
+            synchronized (room) {
+                Instant now = Instant.now();
+                Duration grace = room.getSettings().disconnectGrace();
+                boolean changed = room.actForAwayPlayers(now, grace);
+                changed |= room.updateHost(now, grace);
+                if (changed) broadcast(room);
             }
-        }
+        });
     }
 
     @EventListener
@@ -146,7 +149,7 @@ public class GameController {
 
     // 공개 상태는 방 전체에, 손패·세금 내역은 각 플레이어(대기자 포함)에게만 전송
     private void broadcast(GameRoom room) {
-        messagingTemplate.convertAndSend(ROOM_TOPIC, RoomState.from(room));
+        messagingTemplate.convertAndSend("/topic/room/" + room.getCode(), RoomState.from(room));
         for (Player p : room.allMembers()) {
             messagingTemplate.convertAndSendToUser(p.getId(), "/queue/private", PrivateState.of(room, p));
         }

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>달무티</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+
+<div class="page">
+    <header class="app-header">
+        <span class="app-title">👑 달무티</span>
+        <details class="user-menu">
+            <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
+            <div class="menu-items">
+                <form th:action="@{/login}" method="get">
+                    <button type="submit" class="btn-ghost">이름 변경</button>
+                </form>
+                <form th:action="@{/logout}" method="post">
+                    <button type="submit" class="btn-ghost">로그아웃</button>
+                </form>
+            </div>
+        </details>
+    </header>
+
+    <div class="home-box">
+        <div class="panel error-panel" th:if="${error}" th:text="${error}">오류 메시지</div>
+
+        <!-- 내가 참여 중인 방이 있으면 돌아가기 -->
+        <div class="panel" th:if="${myRoomCode}">
+            <h3>참여 중인 방이 있습니다</h3>
+            <p>게임으로 돌아가세요.</p>
+            <a class="btn-link" th:href="@{/room/{code}(code=${myRoomCode})}">방으로 돌아가기</a>
+        </div>
+
+        <!-- 다른 사람들이 쓰는 방이 있으면 초대 링크로만 입장 -->
+        <div class="panel" th:if="${myRoomCode == null and roomBusy}">
+            <h3>진행 중인 방이 있습니다</h3>
+            <p>방장에게 초대 링크를 받아 입장하세요.</p>
+            <button type="button" disabled>방 만들기</button>
+        </div>
+
+        <!-- 방이 없으면 새로 만들기 -->
+        <form class="panel" th:if="${myRoomCode == null and !roomBusy}" th:action="@{/rooms}" method="post">
+            <h3>새 방 만들기</h3>
+            <p>방을 만들면 방장이 되고, 초대 링크를 친구들에게 보내 함께 플레이할 수 있습니다.</p>
+            <button type="submit">방 만들기</button>
+        </form>
+    </div>
+</div>
+
+</body>
+</html>

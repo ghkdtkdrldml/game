@@ -18,20 +18,27 @@
 <div class="page">
     <header class="app-header">
         <div>
-            <span class="app-title">👑 달무티</span>
+            <a class="app-title" th:href="@{/}" style="text-decoration: none;">👑 달무티</a>
             <span id="conn" class="conn"><span class="conn-dot"></span><span id="connText">연결 중</span></span>
         </div>
-        <details class="user-menu">
-            <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
-            <div class="menu-items">
-                <form th:action="@{/login}" method="get">
-                    <button type="submit" class="btn-ghost">이름 변경</button>
-                </form>
-                <form th:action="@{/logout}" method="post">
-                    <button type="submit" class="btn-ghost">로그아웃</button>
-                </form>
-            </div>
-        </details>
+        <div class="header-actions">
+            <button type="button" class="invite-btn" onclick="shareInvite()">🔗 초대</button>
+            <details id="userMenu" class="user-menu">
+                <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
+                <div class="menu-items">
+                    <!-- 방장 전용 -->
+                    <button type="button" id="menuSettings" class="btn-ghost hidden" onclick="openSettings()">⚙️ 방 설정</button>
+                    <button type="button" id="menuAbort" class="btn-ghost hidden" onclick="abortRound()">⏹ 판 중단</button>
+                    <form th:action="@{/login}" method="get">
+                        <input type="hidden" name="redirect" th:value="'/room/' + ${roomCode}">
+                        <button type="submit" class="btn-ghost">이름 변경</button>
+                    </form>
+                    <form th:action="@{/logout}" method="post">
+                        <button type="submit" class="btn-ghost">로그아웃</button>
+                    </form>
+                </div>
+            </details>
+        </div>
     </header>
 
     <!-- 게임 도중 들어온 경우: 다음 판 대기(관전) 안내 -->
@@ -97,14 +104,49 @@
     </div>
 </div>
 
-<!-- 서버에서 내려주는 설정 (로그인 정보, 카드/신분 표시 이름) -->
+<!-- 방장: 플레이어 칩을 탭하면 나오는 메뉴 -->
+<div id="playerSheet" class="sheet-backdrop hidden" onclick="if (event.target === this) closeSheets()">
+    <div class="sheet">
+        <h3 id="playerSheetTitle"></h3>
+        <button type="button" id="btnTransferHost" class="btn-tax" onclick="transferHost()">👑 방장 넘기기</button>
+        <button type="button" id="btnKick" onclick="kickPlayer()">🚫 강퇴</button>
+        <div class="sheet-note">게임 중에 강퇴하면 이번 판은 자동 패스로 처리되고, 판이 끝나면 나갑니다.</div>
+        <button type="button" class="btn-ghost" onclick="closeSheets()">닫기</button>
+    </div>
+</div>
+
+<!-- 방장: 방 설정 -->
+<div id="settingsSheet" class="sheet-backdrop hidden" onclick="if (event.target === this) closeSheets()">
+    <div class="sheet">
+        <h3>⚙️ 방 설정</h3>
+        <label>연결 끊김 대기 시간
+            <select id="setGrace">
+                <option value="30">30초</option>
+                <option value="60">1분</option>
+                <option value="180">3분</option>
+                <option value="300">5분</option>
+            </select>
+        </label>
+        <label>최대 인원
+            <select id="setMaxPlayers"></select>
+        </label>
+        <label>게임 중 입장 허용 (다음 판 대기)
+            <input type="checkbox" id="setLateJoin">
+        </label>
+        <div class="sheet-note">대기 시간이 지나도 돌아오지 않으면 차례를 자동으로 넘깁니다. 방장이 자리를 비우면 방장도 넘어갑니다.</div>
+        <button type="button" onclick="saveSettings()">저장</button>
+        <button type="button" class="btn-ghost" onclick="closeSheets()">취소</button>
+    </div>
+</div>
+
+<!-- 서버에서 내려주는 설정 (방 코드, 로그인 정보, 카드/신분 표시 이름) -->
 <script th:inline="javascript">
     const GAME_CONFIG = {
+        roomCode: /*[[${roomCode}]]*/ 'room',
         playerId: /*[[${playerId}]]*/ 'player-id',
         playerName: /*[[${playerName}]]*/ '플레이어',
         cards: /*[[${cards}]]*/ {},
-        rankNames: /*[[${rankNames}]]*/ {},
-        disconnectGraceSeconds: /*[[${disconnectGraceSeconds}]]*/ 180
+        rankNames: /*[[${rankNames}]]*/ {}
     };
 </script>
 <script th:src="@{/js/game.js}"></script>

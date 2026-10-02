@@ -8,8 +8,18 @@ import java.util.*;
 
 @Getter
 public class GameRoom {
-    private static final int MIN_PLAYERS = 2;
-    private static final int MAX_PLAYERS = 10;
+    public static final int MIN_PLAYERS = 2;
+
+    // 초대 링크에 들어가는 방 코드
+    private final String code;
+    // 방장. 게임 시작·강퇴·방장 넘기기·판 중단·방 설정 권한
+    private String hostId;
+    private RoomSettings settings;
+    private long nextJoinSeq = 0;
+    // 강퇴된 플레이어 (같은 방에 다시 들어올 수 없음)
+    private final Set<String> kickedIds = new HashSet<>();
+    // 판 시작 시점의 신분 (판 중단 시 되돌리기용. 자리 뽑기·대혁명으로 판 도중 신분이 바뀔 수 있음)
+    private final Map<String, Rank> ranksAtStart = new HashMap<>();
 
     private final List<Player> players = new ArrayList<>();
     // 게임 도중 들어와 다음 판을 기다리는 사람 (관전). 판이 끝나면 players로 합류
@@ -40,8 +50,22 @@ public class GameRoom {
     private final List<CardType> seatDrawPile = new ArrayList<>();
     private final Map<String, CardType> seatDraws = new LinkedHashMap<>();
 
+    // hostId가 null이면 처음 입장한 사람이 방장 (테스트용 기본 생성자)
+    public GameRoom() {
+        this("test", null, RoomSettings.defaults(Duration.ofMinutes(1)));
+    }
+
+    public GameRoom(String code, String hostId, RoomSettings settings) {
+        this.code = code;
+        this.hostId = hostId;
+        this.settings = settings;
+    }
+
     // 입장. 게임 진행 중이면 다음 판 대기자로 등록
     public synchronized void addPlayer(Player player) {
+        if (kickedIds.contains(player.getId())) {
+            throw new GameException(GameException.KICKED, "방장에 의해 퇴장된 방입니다.");
+        }
         if (isNameTaken(player.getName(), player.getId())) {
             throw new GameException(GameException.NAME_TAKEN, "이미 사용 중인 이름입니다. 다른 이름으로 입장해주세요.");
         }
@@ -54,12 +78,113 @@ public class GameRoom {
             existing.setDisconnectedAt(null);
             return;
         }
-        if (players.size() + waitingPlayers.size() >= MAX_PLAYERS) {
-            throw new GameException("방이 가득 찼습니다. (최대 " + MAX_PLAYERS + "명)");
+        if (players.size() + waitingPlayers.size() >= settings.maxPlayers()) {
+            throw new GameException("방이 가득 찼습니다. (최대 " + settings.maxPlayers() + "명)");
+        }
+        if (isGameStarted && !settings.allowLateJoin()) {
+            throw new GameException("게임 진행 중에는 입장할 수 없습니다. (방장 설정)");
         }
 
+        player.setJoinSeq(nextJoinSeq++);
+        // 방장이 정해지지 않은 방(테스트용)이면 처음 들어온 사람이 방장. 방장 부재는 updateHost가 처리
+        if (hostId == null) hostId = player.getId();
         if (isGameStarted) waitingPlayers.add(player);
         else players.add(player);
+    }
+
+    // ---------- 방장 ----------
+
+    public synchronized boolean isHost(String playerId) {
+        return playerId != null && playerId.equals(hostId);
+    }
+
+    private void requireHost(String playerId) {
+        if (!isHost(playerId)) throw new GameException("방장만 할 수 있습니다.");
+    }
+
+    // 방장이 방에 없거나 유예 시간 넘게 연결이 끊겼으면 가장 먼저 들어온 접속자에게 방장을 넘김. 바뀌었으면 true
+    public synchronized boolean updateHost(Instant now, Duration grace) {
+        Player host = findMember(hostId);
+        if (host != null && (host.isConnected() || !isAway(host, now, grace)) && !host.isKicked()) return false;
+
+        Player next = null;
+        for (Player p : allMembers()) {
+            if (p.isConnected() && !p.isKicked() && (next == null || p.getJoinSeq() < next.getJoinSeq())) next = p;
+        }
+        if (next == null || next.getId().equals(hostId)) return false;
+        hostId = next.getId();
+        return true;
+    }
+
+    public synchronized void transferHost(String hostId, String targetId) {
+        requireHost(hostId);
+        Player target = findMember(targetId);
+        if (target == null || target.isKicked()) throw new GameException("방에 있는 사람에게만 넘길 수 있습니다.");
+        if (!target.isConnected()) throw new GameException("연결이 끊긴 사람에게는 넘길 수 없습니다.");
+        this.hostId = targetId;
+    }
+
+    // 강퇴: 대기실·관전자는 바로 내보내고, 게임 중인 플레이어는 이번 판을 자동 패스로 처리한 뒤 판이 끝나면 제거
+    public synchronized void kick(String hostId, String targetId) {
+        requireHost(hostId);
+        if (hostId.equals(targetId)) throw new GameException("자기 자신은 강퇴할 수 없습니다.");
+        Player target = findMember(targetId);
+        if (target == null) throw new GameException("방에 없는 사람입니다.");
+
+        kickedIds.add(targetId);
+        if (waitingPlayers.remove(target)) return;
+        if (!isGameStarted) {
+            players.remove(target);
+            return;
+        }
+        target.setKicked(true);
+        target.setConnected(false);
+        target.setDisconnectedAt(Instant.EPOCH);  // 유예 시간 없이 바로 자동 진행 대상
+    }
+
+    // 판 중단: 진행 중인 판을 취소하고 대기실로. 신분은 판 시작 전으로 되돌림
+    public synchronized void abortRound(String hostId) {
+        requireHost(hostId);
+        if (!isGameStarted) throw new GameException("진행 중인 판이 없습니다.");
+
+        for (Player p : players) {
+            p.getHand().clear();
+            Rank before = ranksAtStart.get(p.getId());
+            if (before != null) p.setRank(before);
+        }
+        this.isGameStarted = false;
+        this.gameOver = false;
+        this.seatDrawPhase = false;
+        this.seatDraws.clear();
+        this.finishOrder.clear();
+        this.taxExchanges.clear();
+        this.revolution = null;
+        this.revolutionDeclarerId = null;
+        this.revolutionCandidateId = null;
+        clearTrick();
+        cleanUpAfterRound();
+        players.sort(Comparator.comparingInt(p -> p.getRank().getOrder()));
+    }
+
+    public synchronized void updateSettings(String hostId, RoomSettings newSettings) {
+        requireHost(hostId);
+        int members = players.size() + waitingPlayers.size();
+        if (newSettings.maxPlayers() < members) {
+            throw new GameException("지금 인원(" + members + "명)보다 적게 정할 수 없습니다.");
+        }
+        this.settings = newSettings;
+    }
+
+    // 판이 끝나거나 중단되면: 끊긴·강퇴된 플레이어 정리, 다음 판 대기자 합류
+    private void cleanUpAfterRound() {
+        players.removeIf(p -> !p.isConnected() || p.isKicked());
+        players.addAll(waitingPlayers);
+        waitingPlayers.clear();
+    }
+
+    private void rejectKicked(String playerId) {
+        Player p = findMember(playerId);
+        if (p != null && p.isKicked()) throw new GameException(GameException.KICKED, "방장에 의해 퇴장되었습니다.");
     }
 
     // 다른 플레이어(대기자 포함)가 같은 이름을 쓰고 있는지. 공백·대소문자 차이는 같은 이름으로 봄
@@ -88,13 +213,15 @@ public class GameRoom {
         if (waitingPlayers.removeIf(p -> p.getId().equals(playerId))) return;
 
         Player p = findPlayer(playerId);
-        if (p == null) return;
+        if (p == null || p.isKicked()) return;  // 강퇴된 플레이어는 이미 자동 진행 대상
         if (isGameStarted) {
             p.setConnected(false);
             p.setDisconnectedAt(now);
         } else {
             players.remove(p);
         }
+        // 대기실에서 방장이 나가면 바로 다음 사람에게 (게임 중이면 유예 시간 후 스케줄러가 처리)
+        if (!isGameStarted) updateHost(now, Duration.ZERO);
     }
 
     // 유예 시간 넘게 연결이 끊긴 플레이어 대신 진행해 게임이 멈추지 않도록 함. 상태가 바뀌었으면 true
@@ -110,7 +237,7 @@ public class GameRoom {
         if (seatDrawPhase) {
             for (Player p : new ArrayList<>(players)) {
                 if (seatDrawPhase && !seatDraws.containsKey(p.getId()) && isAway(p, now, grace)) {
-                    drawSeatCard(p.getId());
+                    drawSeatCardFor(p.getId());
                     changed = true;
                 }
             }
@@ -119,7 +246,7 @@ public class GameRoom {
 
         if (isRevolutionPending()) {
             if (!isAway(findPlayer(revolutionCandidateId), now, grace)) return false;
-            decideRevolution(revolutionCandidateId, false);
+            applyRevolutionDecision(false);
             changed = true;
         }
 
@@ -191,8 +318,12 @@ public class GameRoom {
 
     private void validateStart(String playerId) {
         if (findPlayer(playerId) == null) throw new GameException("방에 참가한 플레이어만 게임을 시작할 수 있습니다.");
+        requireHost(playerId);
         if (isGameStarted) throw new GameException("이미 게임이 진행 중입니다.");
         if (players.size() < MIN_PLAYERS) throw new GameException("최소 " + MIN_PLAYERS + "명이 필요합니다.");
+
+        ranksAtStart.clear();
+        for (Player p : players) ranksAtStart.put(p.getId(), p.getRank());
     }
 
     private boolean allCitizens() {
@@ -238,6 +369,12 @@ public class GameRoom {
     }
 
     public synchronized void drawSeatCard(String playerId) {
+        rejectKicked(playerId);
+        drawSeatCardFor(playerId);
+    }
+
+    // 자동 진행(연결 끊김·강퇴)에서도 쓰는 실제 뽑기
+    private void drawSeatCardFor(String playerId) {
         if (!seatDrawPhase) throw new GameException("자리 뽑기 중이 아닙니다.");
         if (findPlayer(playerId) == null) throw new GameException("이번 판 참가자만 뽑을 수 있습니다.");
         if (seatDraws.containsKey(playerId)) throw new GameException("이미 카드를 뽑았습니다.");
@@ -307,10 +444,16 @@ public class GameRoom {
     //  - 선언: 세금 교환 없음. 선언자가 농노면 대혁명으로 신분이 뒤집힘
     //  - 안 함: 평소대로 세금 교환
     public synchronized void decideRevolution(String playerId, boolean declare) {
+        rejectKicked(playerId);
         if (!isRevolutionPending()) throw new GameException("혁명을 결정할 단계가 아닙니다.");
         if (!revolutionCandidateId.equals(playerId)) {
             throw new GameException("혁명은 어릿광대 2장을 가진 플레이어만 선언할 수 있습니다.");
         }
+        applyRevolutionDecision(declare);
+    }
+
+    private void applyRevolutionDecision(boolean declare) {
+        String playerId = revolutionCandidateId;
         this.revolutionCandidateId = null;
 
         if (!declare) {
@@ -387,6 +530,7 @@ public class GameRoom {
 
     // 상위 신분이 받은 세금만큼 원하는 카드를 골라 하위 신분에게 돌려줌
     public synchronized void returnTax(String playerId, List<CardType> cards) {
+        rejectKicked(playerId);
         if (!isTaxPhase()) throw new GameException("세금 교환 단계가 아닙니다.");
         TaxExchange exchange = null;
         for (TaxExchange e : taxExchanges) {
@@ -477,10 +621,7 @@ public class GameRoom {
         this.gameOver = true;
         clearTrick();
 
-        // 게임 중 나간 플레이어는 판이 끝나면 정리하고, 다음 판 대기자를 합류시킴
-        players.removeIf(p -> !p.isConnected());
-        players.addAll(waitingPlayers);
-        waitingPlayers.clear();
+        cleanUpAfterRound();
     }
 
     private Rank rankOf(int place, int total) {
@@ -506,6 +647,7 @@ public class GameRoom {
     }
 
     private void requireTurn(String playerId) {
+        rejectKicked(playerId);
         if (!isGameStarted) throw new GameException("게임이 진행 중이 아닙니다.");
         if (seatDrawPhase) throw new GameException("자리 뽑기가 끝난 뒤에 진행할 수 있습니다.");
         if (isRevolutionPending()) throw new GameException("카드 배분 확인이 끝난 뒤에 진행할 수 있습니다.");

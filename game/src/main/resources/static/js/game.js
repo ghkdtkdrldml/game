@@ -51,6 +51,10 @@ function connect() {
             const error = JSON.parse(message.body);
             log('⚠ ' + error.message);
             toast(error.message, 'error');
+            // 입장하려는데 같은 이름이 이미 방에 있으면 이름을 바꾸도록 로그인 화면으로
+            if (error.code === 'NAME_TAKEN') {
+                setTimeout(() => location.href = '/login?error=nameTaken', 1500);
+            }
         });
 
         // 방 입장 요청 (이름은 로그인 정보로 서버가 처리). 게임 중 재접속이면 손패 그대로 복귀
@@ -99,6 +103,21 @@ function onRoomState(next) {
     room = next;
 
     // 상태 변화 알림
+    if (!prev?.seatDrawPhase && next.seatDrawPhase && !amWaiting(next)) {
+        log('🎴 자리 뽑기를 시작합니다. 숫자가 낮은 카드를 뽑을수록 높은 신분이 됩니다.');
+        toast('자리 뽑기! 카드를 뽑아 신분을 정합니다', 'turn');
+        if (navigator.vibrate) navigator.vibrate(150);
+    }
+    if (prev?.seatDrawPhase && !next.seatDrawPhase && next.gameStarted) {
+        const result = [...next.players]
+            .filter(p => next.seatDraws[p.id])
+            .sort((a, b) => cardInfo[next.seatDraws[a.id]].value - cardInfo[next.seatDraws[b.id]].value)
+            .map(p => `${cardInfo[next.seatDraws[p.id]].value} ${p.name}(${rankNames[p.rank]})`)
+            .join(', ');
+        log('🎴 자리 뽑기 결과: ' + result);
+        const myRank = next.players.find(p => p.id === myPlayerId)?.rank;
+        if (myRank) toast(`자리 결정! 나는 ${rankNames[myRank]} — 첫 판은 세금 없이 시작합니다`, 'turn');
+    }
     if (!prev?.revolution && next.revolution) {
         const msg = revolutionMessage(next);
         log(msg);
@@ -116,6 +135,9 @@ function onRoomState(next) {
         log('🏁 게임 종료! ' + result);
         toast('게임 종료! ' + result);
     }
+    if (amWaiting(prev) && !amWaiting(next) && next.players.some(p => p.id === myPlayerId)) {
+        toast('대기 끝! 다음 판부터 함께합니다', 'turn');
+    }
     if (!isMyTurn(prev) && isMyTurn(next)) {
         toast('내 차례입니다!', 'turn');
         if (navigator.vibrate) navigator.vibrate(150);
@@ -124,9 +146,24 @@ function onRoomState(next) {
     render();
 }
 
-// 카드를 내는 단계 (혁명 결정·세금 교환이 끝난 뒤)
+// 카드를 내는 단계 (자리 뽑기·혁명 결정·세금 교환이 끝난 뒤)
 function isPlaying(r) {
-    return !!(r && r.gameStarted && !r.revolutionPending && !r.taxPhase);
+    return !!(r && r.gameStarted && !r.seatDrawPhase && !r.revolutionPending && !r.taxPhase);
+}
+
+function haveDrawnSeat(r) {
+    return !!r?.seatDraws?.[myPlayerId];
+}
+
+// 게임 도중 들어와 다음 판을 기다리는 중(관전)인지
+function amWaiting(r) {
+    return !!(r && r.waitingPlayers.some(p => p.id === myPlayerId));
+}
+
+// 연결 끊긴 플레이어를 기다려주는 시간 (예: "3분", "90초")
+function graceText() {
+    const s = GAME_CONFIG.disconnectGraceSeconds;
+    return s % 60 === 0 ? `${s / 60}분` : `${s}초`;
 }
 
 function isMyTurn(r) {
@@ -153,7 +190,9 @@ function selectedCards() {
 }
 
 function playerName(id) {
-    return room?.players.find(p => p.id === id)?.name || id;
+    return room?.players.find(p => p.id === id)?.name
+        || room?.waitingPlayers.find(p => p.id === id)?.name
+        || id;
 }
 
 // ---------------- 화면 그리기 ----------------
@@ -163,6 +202,7 @@ function render() {
     renderStatus();
     renderPlayers();
     renderHand();
+    $('waitBanner').classList.toggle('active', amWaiting(room));
     renderRevolutionBanner();
     renderTaxBanner();
     renderActions();
@@ -205,6 +245,19 @@ function renderStatus() {
     } else if (!room.gameStarted) {
         text.textContent = `대기 중 — ${room.players.length}명 참여 (최소 ${MIN_PLAYERS}명)`;
         trick.append(text);
+    } else if (room.seatDrawPhase) {
+        const drawn = Object.keys(room.seatDraws).length;
+        text.textContent = `🎴 자리 뽑기 — 숫자가 낮은 카드일수록 높은 신분 (${drawn}/${room.players.length}명 뽑음)`;
+        trick.append(text);
+        if (haveDrawnSeat(room)) {
+            const row = document.createElement('div');
+            row.className = 'trick-cards';
+            const label = document.createElement('span');
+            label.className = 'trick-text';
+            label.textContent = '내가 뽑은 카드';
+            row.append(cardFace(room.seatDraws[myPlayerId]), label);
+            trick.append(row);
+        }
     } else if (room.revolutionPending) {
         // 누가 결정 중인지는 표시하지 않음 (어릿광대 2장 보유가 드러나지 않도록)
         text.textContent = '🃏 카드 배분 확인 중…';
@@ -223,6 +276,14 @@ function renderStatus() {
     } else {
         text.textContent = '바닥이 비어 있습니다 — 선 플레이어가 아무 카드나 냅니다';
         trick.append(text);
+    }
+
+    // 자리 뽑기 직후 첫 판이면 표시 (뽑기 결과는 다음 판 시작 때 지워짐)
+    if (isPlaying(room) && Object.keys(room.seatDraws).length > 0) {
+        const tag = document.createElement('div');
+        tag.className = 'rev-tag';
+        tag.textContent = '🎴 첫 판 — 세금 없음';
+        trick.append(tag);
     }
 
     // 혁명이 선언된 판이면 표시
@@ -266,14 +327,26 @@ function renderPlayers() {
 
         chip.append(name, meta);
 
+        if (room.seatDrawPhase) {
+            const drawn = room.seatDraws[p.id];
+            chip.append(drawn
+                ? badge(`🎴 ${cardInfo[drawn].value} ${cardInfo[drawn].name}`, 'var(--gold-light)')
+                : badge('뽑는 중…', 'var(--muted)'));
+        }
         const place = room.finishOrder.indexOf(p.id);
         if (place >= 0) chip.append(badge(`🏅 ${place + 1}등`, 'var(--green)'));
         const taxToReturn = room.pendingTaxReturns[p.id];
         if (taxToReturn) chip.append(badge(`💰 ${taxToReturn}장 반환 대기`, 'var(--gold)'));
-        if (!p.connected) chip.append(badge('연결 끊김', 'var(--muted)'));
+        if (!p.connected) chip.append(badge(`연결 끊김 · ${graceText()} 후 자동 진행`, 'var(--muted)'));
 
         list.append(chip);
     });
+
+    // 다음 판 대기자 (이름은 사용자 입력이므로 textContent)
+    const waitingList = $('waitingList');
+    const waiting = room.waitingPlayers;
+    waitingList.classList.toggle('hidden', waiting.length === 0);
+    waitingList.textContent = `👀 다음 판 대기: ${waiting.map(p => p.name + (p.id === myPlayerId ? ' (나)' : '')).join(', ')}`;
 
     // 현재 차례인 플레이어가 보이도록 목록만 가로 스크롤 (scrollIntoView는 페이지 세로 스크롤까지 움직이므로 사용 안 함)
     const turnChip = list.querySelector('.turn');
@@ -305,9 +378,9 @@ function renderHand() {
         const empty = document.createElement('div');
         empty.className = 'hand-empty';
         const place = room.finishOrder.indexOf(myPlayerId);
-        empty.textContent = place >= 0 && room.gameStarted
-            ? `🎉 모두 냈습니다! ${place + 1}등`
-            : '게임이 시작되면 카드가 나옵니다';
+        if (amWaiting(room)) empty.textContent = '다음 판부터 카드를 받습니다';
+        else if (place >= 0 && room.gameStarted) empty.textContent = `🎉 모두 냈습니다! ${place + 1}등`;
+        else empty.textContent = '게임이 시작되면 카드가 나옵니다';
         container.append(empty);
         return;
     }
@@ -405,16 +478,29 @@ function renderActions() {
     const count = selectedCards().length;
     let hint = '';
 
+    // 다음 판 대기(관전) 중이면 비활성 버튼과 안내만 표시
+    if (amWaiting(room)) {
+        ['btnStart', 'btnDraw', 'btnRevolution', 'btnNoRevolution', 'btnTax', 'btnPass'].forEach(id => show(id, false));
+        show('btnPlay', true);
+        $('btnPlay').textContent = '다음 판 대기 중';
+        $('btnPlay').disabled = true;
+        $('actionHint').textContent = '관전 중입니다 — 이번 판이 끝나면 참여합니다';
+        return;
+    }
+
     const lobby = !room.gameStarted;
+    const inSeatDraw = room.gameStarted && room.seatDrawPhase;
+    const canDraw = inSeatDraw && !haveDrawnSeat(room);
     const inRevolution = room.gameStarted && room.revolutionPending;
     const canDecide = inRevolution && !!me?.canDecideRevolution;
     const taxToReturn = myPendingTaxCount();
     const inTax = room.gameStarted && !room.revolutionPending && room.taxPhase;
     const playing = isPlaying(room);
     // 다른 사람의 결정/반환을 기다리는 중이면 비활성 '내기' 버튼만 표시
-    const waiting = (inRevolution && !canDecide) || (inTax && taxToReturn === 0);
+    const waiting = (inSeatDraw && !canDraw) || (inRevolution && !canDecide) || (inTax && taxToReturn === 0);
 
     show('btnStart', lobby);
+    show('btnDraw', canDraw);
     show('btnRevolution', canDecide);
     show('btnNoRevolution', canDecide);
     show('btnTax', inTax && taxToReturn > 0);
@@ -425,6 +511,13 @@ function renderActions() {
         $('btnStart').textContent = room.gameOver ? '다음 판 시작' : '게임 시작';
         $('btnStart').disabled = !connected || room.players.length < MIN_PLAYERS;
         hint = room.players.length < MIN_PLAYERS ? `최소 ${MIN_PLAYERS}명이 모여야 시작할 수 있습니다` : '';
+    } else if (canDraw) {
+        $('btnDraw').disabled = !connected;
+        hint = '카드를 뽑아 이번 판 신분을 정하세요';
+    } else if (inSeatDraw) {
+        $('btnPlay').textContent = '내기';
+        $('btnPlay').disabled = true;
+        hint = '다른 사람들이 다 뽑을 때까지 기다리는 중';
     } else if (canDecide) {
         $('btnRevolution').disabled = !connected;
         $('btnNoRevolution').disabled = !connected;
@@ -457,6 +550,10 @@ function renderActions() {
 
 function startGame() {
     send('/app/game/start');
+}
+
+function drawSeatCard() {
+    send('/app/game/draw');
 }
 
 function decideRevolution(declare) {

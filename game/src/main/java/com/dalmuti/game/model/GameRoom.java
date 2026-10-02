@@ -12,6 +12,8 @@ public class GameRoom {
     private static final int MAX_PLAYERS = 10;
 
     private final List<Player> players = new ArrayList<>();
+    // 게임 도중 들어와 다음 판을 기다리는 사람 (관전). 판이 끝나면 players로 합류
+    private final List<Player> waitingPlayers = new ArrayList<>();
 
     private int currentTurnIndex = 0;
     private CardType currentTrickType = null;
@@ -33,18 +35,47 @@ public class GameRoom {
     private Revolution revolution;
     private String revolutionDeclarerId;
 
+    // 자리 뽑기 단계 (첫 판 신분 정하기). 뽑은 카드는 공개 정보라 판 시작 후에도 결과 표시용으로 유지
+    private boolean seatDrawPhase = false;
+    private final List<CardType> seatDrawPile = new ArrayList<>();
+    private final Map<String, CardType> seatDraws = new LinkedHashMap<>();
+
+    // 입장. 게임 진행 중이면 다음 판 대기자로 등록
     public synchronized void addPlayer(Player player) {
-        // 같은 ID 재입장은 중복 추가 없이 허용 (진행 중 재접속 포함)
-        Player existing = findPlayer(player.getId());
+        if (isNameTaken(player.getName(), player.getId())) {
+            throw new GameException(GameException.NAME_TAKEN, "이미 사용 중인 이름입니다. 다른 이름으로 입장해주세요.");
+        }
+
+        // 같은 ID 재입장은 중복 추가 없이 허용 (진행 중 재접속, 이름 변경 포함)
+        Player existing = findMember(player.getId());
         if (existing != null) {
+            existing.setName(player.getName());
             existing.setConnected(true);
             existing.setDisconnectedAt(null);
             return;
         }
-        if (isGameStarted) throw new GameException("이미 게임이 진행 중인 방입니다.");
-        if (players.size() >= MAX_PLAYERS) throw new GameException("방이 가득 찼습니다. (최대 " + MAX_PLAYERS + "명)");
+        if (players.size() + waitingPlayers.size() >= MAX_PLAYERS) {
+            throw new GameException("방이 가득 찼습니다. (최대 " + MAX_PLAYERS + "명)");
+        }
 
-        players.add(player);
+        if (isGameStarted) waitingPlayers.add(player);
+        else players.add(player);
+    }
+
+    // 다른 플레이어(대기자 포함)가 같은 이름을 쓰고 있는지. 공백·대소문자 차이는 같은 이름으로 봄
+    public synchronized boolean isNameTaken(String name, String exceptPlayerId) {
+        String normalized = name.strip();
+        for (Player p : allMembers()) {
+            if (!p.getId().equals(exceptPlayerId) && p.getName().strip().equalsIgnoreCase(normalized)) return true;
+        }
+        return false;
+    }
+
+    // 플레이어 + 다음 판 대기자 (메시지 전송 대상)
+    public synchronized List<Player> allMembers() {
+        List<Player> all = new ArrayList<>(players);
+        all.addAll(waitingPlayers);
+        return all;
     }
 
     // 대기 중이면 방에서 제거, 진행 중이면 재접속할 수 있도록 연결 끊김으로만 표시
@@ -53,6 +84,9 @@ public class GameRoom {
     }
 
     synchronized void disconnectPlayer(String playerId, Instant now) {
+        // 다음 판 대기자는 아직 게임에 참여하지 않았으므로 바로 제거
+        if (waitingPlayers.removeIf(p -> p.getId().equals(playerId))) return;
+
         Player p = findPlayer(playerId);
         if (p == null) return;
         if (isGameStarted) {
@@ -71,6 +105,17 @@ public class GameRoom {
     public synchronized boolean actForAwayPlayers(Instant now, Duration grace) {
         if (!isGameStarted) return false;
         boolean changed = false;
+
+        // 자리 뽑기: 아직 안 뽑은 플레이어 대신 뽑기 (모두 뽑으면 바로 카드 배분)
+        if (seatDrawPhase) {
+            for (Player p : new ArrayList<>(players)) {
+                if (seatDrawPhase && !seatDraws.containsKey(p.getId()) && isAway(p, now, grace)) {
+                    drawSeatCard(p.getId());
+                    changed = true;
+                }
+            }
+            if (seatDrawPhase) return changed;
+        }
 
         if (isRevolutionPending()) {
             if (!isAway(findPlayer(revolutionCandidateId), now, grace)) return false;
@@ -111,14 +156,53 @@ public class GameRoom {
                 && !now.isBefore(p.getDisconnectedAt().plus(grace));
     }
 
+    // 대기자는 항상 접속 중 (끊기면 바로 제거되므로)
     public synchronized boolean hasConnectedPlayers() {
         for (Player p : players) {
             if (p.isConnected()) return true;
         }
-        return false;
+        return !waitingPlayers.isEmpty();
     }
 
+    // 게임 시작. 전원 평민(첫 판)이면 자리 뽑기로 신분부터 정하고, 아니면 바로 카드 배분
     public synchronized void startGame(String playerId) {
+        validateStart(playerId);
+        if (allCitizens()) {
+            List<CardType> pile = new ArrayList<>(List.of(CardType.values()));
+            pile.remove(CardType.JESTER);
+            Collections.shuffle(pile);
+            beginSeatDraw(pile);
+        } else {
+            deal(newShuffledDeck(), true);
+        }
+    }
+
+    // 테스트에서 정해진 덱으로 (자리 뽑기 없이) 바로 시작할 수 있도록 분리
+    synchronized void startGame(String playerId, List<CardType> deck) {
+        validateStart(playerId);
+        deal(deck, true);
+    }
+
+    // 테스트에서 정해진 뽑기 순서로 자리 뽑기를 시작할 수 있도록 분리
+    synchronized void startSeatDraw(String playerId, List<CardType> pile) {
+        validateStart(playerId);
+        beginSeatDraw(pile);
+    }
+
+    private void validateStart(String playerId) {
+        if (findPlayer(playerId) == null) throw new GameException("방에 참가한 플레이어만 게임을 시작할 수 있습니다.");
+        if (isGameStarted) throw new GameException("이미 게임이 진행 중입니다.");
+        if (players.size() < MIN_PLAYERS) throw new GameException("최소 " + MIN_PLAYERS + "명이 필요합니다.");
+    }
+
+    private boolean allCitizens() {
+        for (Player p : players) {
+            if (p.getRank() != Rank.CITIZEN) return false;
+        }
+        return true;
+    }
+
+    static List<CardType> newShuffledDeck() {
         List<CardType> deck = new ArrayList<>();
         for (CardType type : CardType.values()) {
             if (type == CardType.JESTER) continue;
@@ -129,17 +213,52 @@ public class GameRoom {
         deck.add(CardType.JESTER);
         deck.add(CardType.JESTER);
         Collections.shuffle(deck);
-
-        startGame(playerId, deck);
+        return deck;
     }
 
-    // 테스트에서 정해진 덱으로 시작할 수 있도록 분리
-    synchronized void startGame(String playerId, List<CardType> deck) {
-        if (findPlayer(playerId) == null) throw new GameException("방에 참가한 플레이어만 게임을 시작할 수 있습니다.");
-        if (isGameStarted) throw new GameException("이미 게임이 진행 중입니다.");
-        if (players.size() < MIN_PLAYERS) throw new GameException("최소 " + MIN_PLAYERS + "명이 필요합니다.");
+    // ---------- 자리 뽑기 (첫 판 신분 정하기) ----------
 
-        // 이전 판 신분 순으로 자리 배치 (달무티가 0번 = 선). 첫 판은 전원 평민이라 입장 순서 유지
+    // 1~12번 카드를 한 장씩 섞어 두고 각자 한 장씩 뽑음 (숫자가 모두 달라 동점 없음, 최대 10명)
+    private void beginSeatDraw(List<CardType> pile) {
+        this.isGameStarted = true;
+        this.gameOver = false;
+        this.seatDrawPhase = true;
+        this.seatDrawPile.clear();
+        this.seatDrawPile.addAll(pile);
+        this.seatDraws.clear();
+        this.finishOrder.clear();
+        this.taxExchanges.clear();
+        this.revolution = null;
+        this.revolutionDeclarerId = null;
+        this.revolutionCandidateId = null;
+        clearTrick();
+        for (Player p : players) {
+            p.getHand().clear();
+        }
+    }
+
+    public synchronized void drawSeatCard(String playerId) {
+        if (!seatDrawPhase) throw new GameException("자리 뽑기 중이 아닙니다.");
+        if (findPlayer(playerId) == null) throw new GameException("이번 판 참가자만 뽑을 수 있습니다.");
+        if (seatDraws.containsKey(playerId)) throw new GameException("이미 카드를 뽑았습니다.");
+
+        seatDraws.put(playerId, seatDrawPile.remove(0));
+        if (seatDraws.size() == players.size()) finishSeatDraw();
+    }
+
+    // 숫자가 낮은(강한) 카드를 뽑은 순서대로 신분을 정하고 자리 배치 후 카드 배분. 첫 판은 세금·혁명 없음
+    private void finishSeatDraw() {
+        players.sort(Comparator.comparingInt(p -> seatDraws.get(p.getId()).getValue()));
+        for (int i = 0; i < players.size(); i++) {
+            players.get(i).setRank(rankOf(i, players.size()));
+        }
+        this.seatDrawPhase = false;
+        deal(newShuffledDeck(), false);
+    }
+
+    // 카드 배분. applyTax가 false면 (자리 뽑기 직후 첫 판) 세금 교환과 혁명 결정을 건너뜀
+    private void deal(List<CardType> deck, boolean applyTax) {
+        // 신분 순으로 자리 배치 (달무티가 0번 = 선)
         players.sort(Comparator.comparingInt(p -> p.getRank().getOrder()));
 
         for (Player p : players) {
@@ -167,6 +286,9 @@ public class GameRoom {
         this.revolution = null;
         this.revolutionDeclarerId = null;
         this.revolutionCandidateId = null;
+        if (!applyTax) return;  // 자리 뽑기 직후 첫 판: 뽑기 결과는 표시용으로 남겨 둠
+
+        seatDraws.clear();
 
         // 세금이 걸린 판(이전 판 신분이 있음)에서 어릿광대 2장을 받은 플레이어가 있으면 혁명 여부부터 결정
         Player candidate = findPlayerWithBothJesters();
@@ -355,8 +477,10 @@ public class GameRoom {
         this.gameOver = true;
         clearTrick();
 
-        // 게임 중 나간 플레이어는 판이 끝나면 정리
+        // 게임 중 나간 플레이어는 판이 끝나면 정리하고, 다음 판 대기자를 합류시킴
         players.removeIf(p -> !p.isConnected());
+        players.addAll(waitingPlayers);
+        waitingPlayers.clear();
     }
 
     private Rank rankOf(int place, int total) {
@@ -383,6 +507,7 @@ public class GameRoom {
 
     private void requireTurn(String playerId) {
         if (!isGameStarted) throw new GameException("게임이 진행 중이 아닙니다.");
+        if (seatDrawPhase) throw new GameException("자리 뽑기가 끝난 뒤에 진행할 수 있습니다.");
         if (isRevolutionPending()) throw new GameException("카드 배분 확인이 끝난 뒤에 진행할 수 있습니다.");
         if (isTaxPhase()) throw new GameException("세금 교환이 끝난 뒤에 진행할 수 있습니다.");
         if (!players.get(currentTurnIndex).getId().equals(playerId)) throw new GameException("내 턴이 아닙니다.");
@@ -390,6 +515,13 @@ public class GameRoom {
 
     private Player findPlayer(String playerId) {
         for (Player p : players) {
+            if (p.getId().equals(playerId)) return p;
+        }
+        return null;
+    }
+
+    private Player findMember(String playerId) {
+        for (Player p : allMembers()) {
             if (p.getId().equals(playerId)) return p;
         }
         return null;

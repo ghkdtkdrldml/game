@@ -2,6 +2,11 @@ spring:
   application:
     name: game
 
+game:
+  # 게임 중 연결이 끊긴 플레이어를 기다려주는 시간. 지나면 자동 패스/선 넘김/세금 자동 반환
+  # (모바일은 앱 전환만 해도 연결이 끊기므로 넉넉하게)
+  disconnect-grace: 1m
+
 server:
   servlet:
     session:

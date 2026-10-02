@@ -12,6 +12,8 @@ import java.util.Map;
 // 방 전체에 공개되는 상태. 손패 내용은 제외하고 장수만 포함
 public record RoomState(
         List<PlayerView> players,
+        // 게임 도중 들어와 다음 판을 기다리는 사람
+        List<PlayerView> waitingPlayers,
         int currentTurnIndex,
         CardType currentTrickType,
         int currentTrickCount,
@@ -25,7 +27,10 @@ public record RoomState(
         boolean revolutionPending,
         // 이번 판에 선언된 혁명과 선언자 (없으면 null)
         Revolution revolution,
-        String revolutionDeclarerId
+        String revolutionDeclarerId,
+        // 자리 뽑기(첫 판 신분 정하기) 중인지, 지금까지 뽑은 카드 (playerId → 카드)
+        boolean seatDrawPhase,
+        Map<String, CardType> seatDraws
 ) {
     public record PlayerView(String id, String name, Rank rank, int handCount, boolean connected) {
         static PlayerView from(Player p) {
@@ -36,6 +41,7 @@ public record RoomState(
     public static RoomState from(GameRoom room) {
         return new RoomState(
                 room.getPlayers().stream().map(PlayerView::from).toList(),
+                room.getWaitingPlayers().stream().map(PlayerView::from).toList(),
                 room.getCurrentTurnIndex(),
                 room.getCurrentTrickType(),
                 room.getCurrentTrickCount(),
@@ -46,7 +52,9 @@ public record RoomState(
                 Map.copyOf(room.getPendingTaxReturns()),
                 room.isRevolutionPending(),
                 room.getRevolution(),
-                room.getRevolutionDeclarerId()
+                room.getRevolutionDeclarerId(),
+                room.isSeatDrawPhase(),
+                Map.copyOf(room.getSeatDraws())
         );
     }
 }

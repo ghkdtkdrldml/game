@@ -20,6 +20,11 @@ public class GameService {
         return room;
     }
 
+    // 로그인 시 이름 중복 확인용. 최종 확인은 입장(join) 시 GameRoom에서 다시 함
+    public synchronized boolean isNameTaken(String name, String exceptPlayerId) {
+        return room.isNameTaken(name, exceptPlayerId);
+    }
+
     public synchronized GameRoom join(Player player, String sessionId) {
         room.addPlayer(player);
         sessions.put(sessionId, player.getId());

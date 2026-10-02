@@ -184,10 +184,8 @@ class GameWebSocketTest {
         // 이름은 로그인 시 정한 값
         assertEquals(Set.of("A", "B"), ((List<?>) lobby.get("players")).stream()
                 .map(p -> ((Map<?, ?>) p).get("name")).collect(java.util.stream.Collectors.toSet()));
-        a.send("/app/game/start");
-
         // 공개 상태에는 손패 장수만 있고 카드 목록은 없음
-        Map<?, ?> state = awaitMatching(a.states, s -> Boolean.TRUE.equals(s.get("gameStarted")));
+        Map<?, ?> state = startFirstRound(a, a, b);
         List<?> players = (List<?>) state.get("players");
         assertEquals(2, players.size());
         for (Object p : players) {
@@ -228,6 +226,53 @@ class GameWebSocketTest {
         awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 1);
     }
 
+    @Test
+    void loginRejectsNameAlreadyInRoom() throws Exception {
+        Client a = new Client("홍길동");
+        a.send("/app/game/join");
+        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 1);
+
+        HttpResponse<String> res = postLogin(" 홍길동 ", null);
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("이미 사용 중인 이름입니다"));
+    }
+
+    // 둘 다 입장 전에 같은 이름으로 로그인한 경우: 나중에 입장한 쪽이 NAME_TAKEN 오류를 받음
+    @Test
+    void joinRejectsDuplicateNameRace() throws Exception {
+        Client first = new Client("철수");
+        Client second = new Client("철수");
+
+        first.send("/app/game/join");
+        awaitMatching(first.states, s -> ((List<?>) s.get("players")).size() == 1);
+        second.send("/app/game/join");
+
+        Map<?, ?> error = second.errors.poll(5, TimeUnit.SECONDS);
+        assertNotNull(error);
+        assertEquals("NAME_TAKEN", error.get("code"));
+    }
+
+    @Test
+    void joiningDuringGameWaitsAndSpectates() throws Exception {
+        Client a = new Client("A");
+        Client b = new Client("B");
+        a.send("/app/game/join");
+        b.send("/app/game/join");
+        awaitMatching(a.states, s -> ((List<?>) s.get("players")).size() == 2);
+        a.send("/app/game/start");
+        awaitMatching(a.states, s -> Boolean.TRUE.equals(s.get("gameStarted")));
+
+        Client c = new Client("C");
+        c.send("/app/game/join");
+        // 관전자도 방 상태를 받고, 대기 목록에 표시됨
+        Map<?, ?> state = awaitMatching(c.states, s -> ((List<?>) s.get("waitingPlayers")).size() == 1);
+        assertEquals(2, ((List<?>) state.get("players")).size());
+        assertTrue((Boolean) state.get("gameStarted"));
+        // 개인 상태도 받지만 손패는 없음
+        Map<?, ?> cPrivate = awaitMatching(c.privates, m -> true);
+        assertTrue(((List<?>) cPrivate.get("hand")).isEmpty());
+    }
+
     // 게임 중 새로고침: 같은 로그인(쿠키)으로 다시 연결하면 같은 자리·손패로 복귀
     @Test
     void refreshDuringGameRestoresPlayer() throws Exception {
@@ -238,7 +283,7 @@ class GameWebSocketTest {
         a.send("/app/game/join");
         b.send("/app/game/join");
         awaitMatching(b.states, s -> ((List<?>) s.get("players")).size() == 2);
-        b.send("/app/game/start");
+        startFirstRound(b, a, b);
         List<?> handBefore = (List<?>) awaitMatching(a.privates, m -> !((List<?>) m.get("hand")).isEmpty()).get("hand");
 
         // 새로고침 = 연결 끊김 → 다른 플레이어에게 연결 끊김으로 표시
@@ -255,6 +300,17 @@ class GameWebSocketTest {
                 .allMatch(p -> Boolean.TRUE.equals(((Map<?, ?>) p).get("connected"))));
         assertEquals(2, ((List<?>) state.get("players")).size());
         assertTrue((Boolean) state.get("gameStarted"));
+    }
+
+    // 첫 판 시작: 자리 뽑기 후 전원이 카드를 뽑아 배분까지 끝난 상태를 반환
+    private Map<?, ?> startFirstRound(Client starter, Client... all) throws InterruptedException {
+        starter.send("/app/game/start");
+        for (Client c : all) {
+            awaitMatching(c.states, s -> Boolean.TRUE.equals(s.get("seatDrawPhase")));
+            c.send("/app/game/draw");
+        }
+        return awaitMatching(starter.states,
+                s -> Boolean.TRUE.equals(s.get("gameStarted")) && Boolean.FALSE.equals(s.get("seatDrawPhase")));
     }
 
     private static <T> T awaitMatching(BlockingQueue<T> queue, java.util.function.Predicate<T> condition) throws InterruptedException {

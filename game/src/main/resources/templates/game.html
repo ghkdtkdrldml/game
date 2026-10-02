@@ -34,6 +34,11 @@
         </details>
     </header>
 
+    <!-- 게임 도중 들어온 경우: 다음 판 대기(관전) 안내 -->
+    <div id="waitBanner" class="wait-banner">
+        👀 게임이 진행 중입니다. <b>관전하면서 기다리면 다음 판부터 참여</b>합니다.
+    </div>
+
     <!-- 혁명 선언 안내 (어릿광대 2장을 받은 본인에게만 표시) -->
     <div id="revBanner" class="rev-banner">
         <h2>🃏 어릿광대 2장!</h2>
@@ -57,6 +62,7 @@
     <section class="panel">
         <div class="panel-title"><span id="playersTitle">플레이어</span></div>
         <div id="players" class="players"></div>
+        <div id="waitingList" class="waiting-list hidden"></div>
     </section>
 
     <!-- 내 손패 -->
@@ -81,6 +87,7 @@
         <div id="actionHint" class="action-hint"></div>
         <div class="action-buttons">
             <button id="btnStart" class="hidden" onclick="startGame()">게임 시작</button>
+            <button id="btnDraw" class="btn-revolution hidden" onclick="drawSeatCard()">🎴 카드 뽑기</button>
             <button id="btnPass" class="btn-pass hidden" onclick="passTurn()">패스</button>
             <button id="btnPlay" class="hidden" onclick="playSelectedCards()">내기</button>
             <button id="btnTax" class="btn-tax hidden" onclick="returnTax()">돌려주기</button>
@@ -96,7 +103,8 @@
         playerId: /*[[${playerId}]]*/ 'player-id',
         playerName: /*[[${playerName}]]*/ '플레이어',
         cards: /*[[${cards}]]*/ {},
-        rankNames: /*[[${rankNames}]]*/ {}
+        rankNames: /*[[${rankNames}]]*/ {},
+        disconnectGraceSeconds: /*[[${disconnectGraceSeconds}]]*/ 180
     };
 </script>
 <script th:src="@{/js/game.js}"></script>

@@ -12,6 +12,7 @@ import com.dalmuti.game.model.GameRoom;
 import com.dalmuti.game.model.Player;
 import com.dalmuti.game.service.GameService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.handler.annotation.*;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -31,10 +32,13 @@ import java.time.Instant;
 public class GameController {
 
     private static final String ROOM_TOPIC = "/topic/room";
-    private static final Duration DISCONNECT_GRACE = Duration.ofSeconds(15);
 
     private final GameService gameService;
     private final SimpMessagingTemplate messagingTemplate;
+
+    // 연결이 끊긴 플레이어를 기다려주는 시간. 지나면 자동 패스 등으로 대신 진행 (application.yaml)
+    @Value("${game.disconnect-grace}")
+    private Duration disconnectGrace;
 
     @MessageMapping("/game/join")
     public void joinRoom(Principal principal, SimpMessageHeaderAccessor headerAccessor) {
@@ -54,6 +58,16 @@ public class GameController {
         GameRoom room = gameService.getRoom();
         synchronized (room) {
             room.startGame(playerId);
+            broadcast(room);
+        }
+    }
+
+    @MessageMapping("/game/draw")
+    public void drawSeatCard(Principal principal) {
+        String playerId = requirePlayerId(principal);
+        GameRoom room = gameService.getRoom();
+        synchronized (room) {
+            room.drawSeatCard(playerId);
             broadcast(room);
         }
     }
@@ -103,7 +117,7 @@ public class GameController {
     public void actForAwayPlayers() {
         GameRoom room = gameService.getRoom();
         synchronized (room) {
-            if (room.actForAwayPlayers(Instant.now(), DISCONNECT_GRACE)) {
+            if (room.actForAwayPlayers(Instant.now(), disconnectGrace)) {
                 broadcast(room);
             }
         }
@@ -122,7 +136,7 @@ public class GameController {
     @MessageExceptionHandler(GameException.class)
     @SendToUser(destinations = "/queue/errors", broadcast = false)
     public ErrorMessage handleGameException(GameException e) {
-        return new ErrorMessage(e.getMessage());
+        return new ErrorMessage(e.getCode(), e.getMessage());
     }
 
     private String requirePlayerId(Principal principal) {
@@ -130,10 +144,10 @@ public class GameController {
         return principal.getName();
     }
 
-    // 공개 상태는 방 전체에, 손패·세금 내역은 각 플레이어에게만 전송
+    // 공개 상태는 방 전체에, 손패·세금 내역은 각 플레이어(대기자 포함)에게만 전송
     private void broadcast(GameRoom room) {
         messagingTemplate.convertAndSend(ROOM_TOPIC, RoomState.from(room));
-        for (Player p : room.getPlayers()) {
+        for (Player p : room.allMembers()) {
             messagingTemplate.convertAndSendToUser(p.getId(), "/queue/private", PrivateState.of(room, p));
         }
     }

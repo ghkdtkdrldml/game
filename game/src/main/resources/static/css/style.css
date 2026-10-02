@@ -256,6 +256,18 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .tax-banner .waiting { font-size: 13px; }
 .panel.tax-mode { border: 2px solid var(--gold); }
 
+/* ---------- 다음 판 대기 (관전) ---------- */
+.wait-banner {
+    display: none;
+    background: var(--panel-2);
+    border: 2px solid var(--green);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+.wait-banner.active { display: block; }
+.waiting-list { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
 /* ---------- 혁명 ---------- */
 .rev-banner {
     display: none;

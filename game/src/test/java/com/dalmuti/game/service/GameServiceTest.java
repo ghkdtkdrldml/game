@@ -61,6 +61,19 @@ class GameServiceTest {
     }
 
     @Test
+    void waitingPlayerDisconnectIsHandled() {
+        GameRoom room = service.join(new Player("a", "A"), "s1");
+        service.join(new Player("b", "B"), "s2");
+        room.startGame("a");
+        service.join(new Player("c", "C"), "s3");
+        assertEquals(1, room.getWaitingPlayers().size());
+
+        assertTrue(service.disconnect("s3").isPresent());
+        assertTrue(room.getWaitingPlayers().isEmpty());
+        assertFalse(service.isNameTaken("C", null));
+    }
+
+    @Test
     void otherTabKeepsPlayerConnected() {
         GameRoom room = service.join(new Player("a", "A"), "tab1");
         service.join(new Player("a", "A"), "tab2");
@@ -84,7 +97,7 @@ class GameServiceTest {
         service.join(new Player("b", "B"), "s2");
         room.startGame("a");
 
-        assertThrows(GameException.class, () -> service.join(new Player("c", "C"), "s3"));
+        assertThrows(GameException.class, () -> service.join(new Player("c", "A"), "s3"));  // 이름 중복
         // 실패한 입장의 세션은 남지 않음
         assertTrue(service.disconnect("s3").isEmpty());
         assertSame(room, service.getRoom());

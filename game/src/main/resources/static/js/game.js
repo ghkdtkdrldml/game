@@ -103,6 +103,7 @@ function onRoomState(next) {
     room = next;
 
     // 상태 변화 알림
+    if (!prev?.seatDrawPhase && next.seatDrawPhase) flippedSeatCard = null;
     if (!prev?.seatDrawPhase && next.seatDrawPhase && !amWaiting(next)) {
         log('🎴 자리 뽑기를 시작합니다. 숫자가 낮은 카드를 뽑을수록 높은 신분이 됩니다.');
         toast('자리 뽑기! 카드를 뽑아 신분을 정합니다', 'turn');
@@ -219,18 +220,57 @@ function renderRevolutionBanner() {
         : '선언하면 이번 판은 세금 교환 없이 바로 시작합니다. 선언하지 않으면 평소대로 세금을 교환합니다.';
 }
 
-function cardFace(type, extraClass = '') {
+const CARD_ICONS = '/img/card-icons.svg';
+
+// 신분대별 카드 색: 왕족 1~3, 귀족 4~6, 평민 7~12, 어릿광대
+function cardTier(value) {
+    return value <= 3 ? 'royal' : value <= 6 ? 'noble' : value <= 12 ? 'common' : 'jester';
+}
+
+function iconSvg(iconId) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `${CARD_ICONS}#i-${iconId}`);
+    svg.append(use);
+    return svg;
+}
+
+// 카드 앞면. width: 카드 폭(px), 안쪽 요소는 CSS에서 폭 비율로 계산
+function cardFace(type, width = 76) {
+    const { value, name } = cardInfo[type];
     const el = document.createElement('div');
-    el.className = `card-face ${type === 'JESTER' ? 'jester' : ''} ${extraClass}`;
-    const num = document.createElement('span');
-    num.className = 'num';
-    num.textContent = cardInfo[type].value;
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = cardInfo[type].name;
-    el.append(num, name);
+    el.className = `card ${cardTier(value)}`;
+    el.style.setProperty('--w', width + 'px');
+
+    const corner = document.createElement('span');
+    corner.className = 'corner';
+    corner.textContent = value;
+    const medal = document.createElement('div');
+    medal.className = 'medal';
+    medal.append(iconSvg(type));
+    const ribbon = document.createElement('div');
+    ribbon.className = 'ribbon';
+    ribbon.textContent = name;
+
+    el.append(corner, medal, ribbon);
     return el;
 }
+
+function cardBack(width = 76, extraClass = '') {
+    const el = document.createElement('div');
+    el.className = `card back ${extraClass}`;
+    el.style.setProperty('--w', width + 'px');
+    if (!extraClass.includes('mini')) {
+        const medal = document.createElement('div');
+        medal.className = 'medal';
+        medal.append(iconSvg('DALMUTI'));
+        el.append(medal);
+    }
+    return el;
+}
+
+// 자리 뽑기 카드 뒤집기 애니메이션은 처음 보여줄 때 한 번만 (render가 화면을 매번 다시 그리므로)
+let flippedSeatCard = null;
 
 function renderStatus() {
     const trick = $('trick');
@@ -249,15 +289,28 @@ function renderStatus() {
         const drawn = Object.keys(room.seatDraws).length;
         text.textContent = `🎴 자리 뽑기 — 숫자가 낮은 카드일수록 높은 신분 (${drawn}/${room.players.length}명 뽑음)`;
         trick.append(text);
+
+        const row = document.createElement('div');
+        row.className = 'trick-cards';
+        const label = document.createElement('span');
+        label.className = 'trick-text';
         if (haveDrawnSeat(room)) {
-            const row = document.createElement('div');
-            row.className = 'trick-cards';
-            const label = document.createElement('span');
-            label.className = 'trick-text';
+            const myCard = room.seatDraws[myPlayerId];
+            const face = cardFace(myCard, 72);
+            if (flippedSeatCard !== myCard) {
+                face.classList.add('flip-in');
+                flippedSeatCard = myCard;
+            }
             label.textContent = '내가 뽑은 카드';
-            row.append(cardFace(room.seatDraws[myPlayerId]), label);
-            trick.append(row);
+            row.append(face, label);
+        } else if (!amWaiting(room)) {
+            // 뒷면 카드를 탭해서도 뽑을 수 있음
+            const back = cardBack(72, 'tappable');
+            back.onclick = drawSeatCard;
+            label.textContent = '카드를 탭해서 뽑으세요';
+            row.append(back, label);
         }
+        if (row.children.length) trick.append(row);
     } else if (room.revolutionPending) {
         // 누가 결정 중인지는 표시하지 않음 (어릿광대 2장 보유가 드러나지 않도록)
         text.textContent = '🃏 카드 배분 확인 중…';
@@ -271,7 +324,7 @@ function renderStatus() {
         const count = document.createElement('span');
         count.className = 'trick-count';
         count.textContent = `× ${room.currentTrickCount}`;
-        row.append(cardFace(room.currentTrickType), count);
+        row.append(cardFace(room.currentTrickType, 84), count);
         trick.append(row);
     } else {
         text.textContent = '바닥이 비어 있습니다 — 선 플레이어가 아무 카드나 냅니다';
@@ -321,9 +374,10 @@ function renderPlayers() {
         name.className = 'p-name';
         name.textContent = p.name + (p.id === myPlayerId ? ' (나)' : '');
 
+        // 신분 · (작은 카드 뒷면) 남은 장수
         const meta = document.createElement('div');
         meta.className = 'p-meta';
-        meta.textContent = `${rankNames[p.rank] || '평민'} · ${p.handCount}장`;
+        meta.append(`${rankNames[p.rank] || '평민'} · `, cardBack(10, 'mini'), `${p.handCount}장`);
 
         chip.append(name, meta);
 
@@ -400,8 +454,10 @@ function renderHand() {
         if (!count) continue;
         const sel = selected[type] || 0;
 
-        const tile = cardFace(type, 'card-tile');
+        const tile = document.createElement('div');
+        tile.className = 'card-tile';
         tile.setAttribute('role', 'button');
+        tile.append(cardFace(type, 76));
         if (sel > 0) tile.classList.add('selected');
         if (received[type]) tile.classList.add('received');
 

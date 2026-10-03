@@ -215,6 +215,10 @@ class GameWebSocketTest {
         assertTrue(res.body().contains("roomCode: \"" + code + "\""));
         // 카드 정보가 서버 enum에서 주입됨
         assertTrue(res.body().contains("\"DALMUTI\":{\"value\":1,\"name\":\"달무티\"}"), res.body());
+        // 외부 CDN 없이 서버에서 제공하는 라이브러리 사용
+        assertFalse(res.body().contains("src=\"https://"));
+        assertEquals(200, get("/js/lib/sockjs.min.js", null).statusCode());
+        assertEquals(200, get("/js/lib/stomp.min.js", null).statusCode());
     }
 
     @Test

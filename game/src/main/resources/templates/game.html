@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#1a1a2e">
     <title>달무티 (Great Dalmuti)</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <!-- SockJS 및 STOMP CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <!-- SockJS 1.6.1, stomp.js 2.3.3: 외부 CDN 장애에 영향받지 않도록 서버에서 직접 제공 (cdnjs 원본과 SRI 해시 일치 확인) -->
+    <script th:src="@{/js/lib/sockjs.min.js}"></script>
+    <script th:src="@{/js/lib/stomp.min.js}"></script>
 </head>
 <body>
 

@@ -6,8 +6,15 @@ game:
   # 게임 중 연결이 끊긴 플레이어를 기다려주는 시간. 지나면 자동 패스/선 넘김/세금 자동 반환
   # (모바일은 앱 전환만 해도 연결이 끊기므로 넉넉하게)
   disconnect-grace: 1m
+  # WebSocket 연결을 허용할 페이지 주소(출처). 비워 두면 같은 출처만 허용.
+  # 프록시(nginx, 클라우드 로드밸런서 등) 뒤에 배포해 연결이 403으로 거부되면 실제 접속 주소를 지정
+  # 예: https://dalmuti.example.com (여러 개는 쉼표로 구분, 환경변수 GAME_ALLOWED_ORIGINS로도 지정 가능)
+  allowed-origins: ${GAME_ALLOWED_ORIGINS:}
 
 server:
+  # 프록시가 보내는 X-Forwarded-Host/Proto 헤더로 실제 접속 주소(https://도메인)를 인식
+  # (없으면 서버가 http://내부주소로 요청받은 것으로 보고 WebSocket 출처 검사에서 거부함)
+  forward-headers-strategy: framework
   servlet:
     session:
       # 로그인 세션 = 플레이어 식별. WebSocket 통신은 HTTP 세션을 갱신하지 않으므로,

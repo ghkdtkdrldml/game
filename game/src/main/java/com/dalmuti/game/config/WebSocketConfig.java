@@ -2,6 +2,7 @@
 package com.dalmuti.game.config;
 
 import com.dalmuti.game.auth.SessionPlayerHandshakeHandler;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -14,9 +15,15 @@ import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.web.socket.config.annotation.*;
 
+import java.util.Arrays;
+
 @Configuration
 @EnableWebSocketMessageBroker
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+
+    // 연결을 허용할 페이지 출처 (application.yaml game.allowed-origins). 비어 있으면 같은 출처만
+    @Value("${game.allowed-origins:}")
+    private String[] allowedOrigins;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
@@ -31,10 +38,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         // 세션별 수신 순서 보장 (구독 → 입장 요청 순서대로 처리)
         registry.setPreserveReceiveOrder(true);
-        // 세션 쿠키로 인증하므로 다른 출처(origin)의 페이지에서 연결하지 못하도록 허용 출처를 지정하지 않음 (같은 출처만)
-        registry.addEndpoint("/ws-dalmuti")
-                .setHandshakeHandler(new SessionPlayerHandshakeHandler())
-                .withSockJS();
+        // 세션 쿠키로 인증하므로 다른 출처(origin)의 페이지에서는 연결하지 못하도록 기본은 같은 출처만 허용.
+        // 프록시 뒤에서 출처 판단이 어긋나면 game.allowed-origins에 실제 접속 주소를 지정
+        StompWebSocketEndpointRegistration endpoint = registry.addEndpoint("/ws-dalmuti")
+                .setHandshakeHandler(new SessionPlayerHandshakeHandler());
+        String[] origins = Arrays.stream(allowedOrigins).map(String::strip).filter(s -> !s.isEmpty()).toArray(String[]::new);
+        if (origins.length > 0) endpoint.setAllowedOriginPatterns(origins);
+        endpoint.withSockJS();
     }
 
     // 로그인(HTTP 세션)하지 않은 연결은 STOMP CONNECT 단계에서 거부

@@ -247,6 +247,31 @@ class GameWebSocketTest {
         assertTrue(get("/", host.cookie).body().contains("/room/" + host.code));
     }
 
+    // ---------- 프록시 뒤 배포 (출처 검사) ----------
+
+    private int sockJsInfoStatus(Map<String, String> headers) throws Exception {
+        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(url("/ws-dalmuti/info"))).GET();
+        headers.forEach(req::header);
+        return http.send(req.build(), HttpResponse.BodyHandlers.ofString()).statusCode();
+    }
+
+    // 프록시 뒤에서는 브라우저 출처(https://도메인)와 서버가 받은 주소(http://내부주소)가 달라짐.
+    // 프록시가 보내는 X-Forwarded-* 헤더를 반영해야 같은 출처로 인정되어 SockJS 연결(xhr_streaming, xhr_send 등)이 허용됨
+    @Test
+    void sockJsAcceptsSameOriginBehindProxy() throws Exception {
+        String origin = "https://dalmuti.example.com";
+        assertEquals(403, sockJsInfoStatus(Map.of("Origin", origin)));  // 헤더 없으면 다른 출처로 보고 거부
+        assertEquals(200, sockJsInfoStatus(Map.of(
+                "Origin", origin,
+                "X-Forwarded-Host", "dalmuti.example.com",
+                "X-Forwarded-Proto", "https")));
+        // 전혀 다른 사이트에서의 연결은 계속 거부
+        assertEquals(403, sockJsInfoStatus(Map.of(
+                "Origin", "https://evil.example",
+                "X-Forwarded-Host", "dalmuti.example.com",
+                "X-Forwarded-Proto", "https")));
+    }
+
     // ---------- WebSocket ----------
 
     @Test

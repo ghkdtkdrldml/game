@@ -7,6 +7,7 @@ import com.dalmuti.game.model.Rank;
 import com.dalmuti.game.model.Revolution;
 import com.dalmuti.game.model.RoomSettings;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -38,7 +39,13 @@ public record RoomState(
         String revolutionDeclarerId,
         // 자리 뽑기(첫 판 신분 정하기) 중인지, 지금까지 뽑은 카드 (playerId → 카드)
         boolean seatDrawPhase,
-        Map<String, CardType> seatDraws
+        Map<String, CardType> seatDraws,
+        // 지금 차례의 남은 시간(ms, 제한 없거나 카드 내는 단계가 아니면 -1).
+        // 기기마다 시계가 달라 절대 시각 대신 남은 시간으로 보냄
+        long turnRemainingMs,
+        // 시간 초과로 자동 패스된 플레이어와 누적 횟수 (알림용)
+        String timedOutPlayerId,
+        long timeoutCount
 ) {
     // kicked: 게임 중 강퇴되어 이번 판은 자동 패스, 판이 끝나면 제거됨
     // citizenNo: 평민끼리의 순서 (1등 시민 = 1). 0이면 번호 없음
@@ -48,9 +55,10 @@ public record RoomState(
         }
     }
 
-    public record SettingsView(long disconnectGraceSeconds, int maxPlayers, boolean allowLateJoin) {
+    // turnTimeLimitSeconds: 0이면 차례 제한 없음
+    public record SettingsView(long disconnectGraceSeconds, long turnTimeLimitSeconds, int maxPlayers, boolean allowLateJoin) {
         static SettingsView from(RoomSettings s) {
-            return new SettingsView(s.disconnectGrace().toSeconds(), s.maxPlayers(), s.allowLateJoin());
+            return new SettingsView(s.disconnectGrace().toSeconds(), s.turnTimeLimit().toSeconds(), s.maxPlayers(), s.allowLateJoin());
         }
     }
 
@@ -75,7 +83,10 @@ public record RoomState(
                 room.getRevolution(),
                 room.getRevolutionDeclarerId(),
                 room.isSeatDrawPhase(),
-                Map.copyOf(room.getSeatDraws())
+                Map.copyOf(room.getSeatDraws()),
+                room.turnRemainingMillis(Instant.now(), room.getSettings().turnTimeLimit()),
+                room.getTimedOutPlayerId(),
+                room.getTimeoutCount()
         );
     }
 }

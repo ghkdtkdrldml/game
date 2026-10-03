@@ -26,6 +26,7 @@ public class GameService {
 
     private final SecureRandom random = new SecureRandom();
     private final Duration defaultGrace;
+    private final Duration defaultTurnTimeLimit;
     private final Duration emptyRoomTtl;
 
     private GameRoom room;  // null이면 방 없음
@@ -35,8 +36,10 @@ public class GameService {
     private final Map<String, String> sessions = new HashMap<>();
 
     public GameService(@Value("${game.disconnect-grace}") Duration defaultGrace,
+                       @Value("${game.turn-time-limit}") Duration defaultTurnTimeLimit,
                        @Value("${game.empty-room-ttl}") Duration emptyRoomTtl) {
         this.defaultGrace = defaultGrace;
+        this.defaultTurnTimeLimit = defaultTurnTimeLimit;
         this.emptyRoomTtl = emptyRoomTtl;
     }
 
@@ -50,7 +53,7 @@ public class GameService {
         if (!canCreateRoom(hostId)) {
             throw new GameException("이미 진행 중인 방이 있습니다. 초대 링크로 입장하세요.");
         }
-        room = new GameRoom(newCode(), hostId, RoomSettings.defaults(defaultGrace));
+        room = new GameRoom(newCode(), hostId, RoomSettings.defaults(defaultGrace, defaultTurnTimeLimit));
         emptySince = Instant.now();  // 방장이 들어오기 전까지는 빈 방
         sessions.clear();
         return room.getCode();

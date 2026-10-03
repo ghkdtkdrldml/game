@@ -26,6 +26,8 @@
             <details id="userMenu" class="user-menu">
                 <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
                 <div class="menu-items">
+                    <!-- 내 차례 진동 (진동을 지원하는 기기에서만 표시, 설정은 이 기기에 저장) -->
+                    <button type="button" id="menuVibrate" class="btn-ghost hidden" onclick="toggleVibration()">📳 진동 켜짐</button>
                     <!-- 방장 전용 -->
                     <button type="button" id="menuSettings" class="btn-ghost hidden" onclick="openSettings()">⚙️ 방 설정</button>
                     <button type="button" id="menuAbort" class="btn-ghost hidden" onclick="abortRound()">⏹ 판 중단</button>
@@ -127,13 +129,22 @@
                 <option value="300">5분</option>
             </select>
         </label>
+        <label>차례 제한 시간
+            <select id="setTurnLimit">
+                <option value="15">15초</option>
+                <option value="30">30초</option>
+                <option value="60">1분</option>
+                <option value="90">1분 30초</option>
+                <option value="0">제한 없음</option>
+            </select>
+        </label>
         <label>최대 인원
             <select id="setMaxPlayers"></select>
         </label>
         <label>게임 중 입장 허용 (다음 판 대기)
             <input type="checkbox" id="setLateJoin">
         </label>
-        <div class="sheet-note">대기 시간이 지나도 돌아오지 않으면 차례를 자동으로 넘깁니다. 방장이 자리를 비우면 방장도 넘어갑니다.</div>
+        <div class="sheet-note">차례 제한 시간이 지나면 자동으로 패스합니다(선이면 선을 넘김). 연결이 끊긴 사람은 대기 시간이 지나면 차례를 넘기고, 방장이 자리를 비우면 방장도 넘어갑니다.</div>
         <button type="button" onclick="saveSettings()">저장</button>
         <button type="button" class="btn-ghost" onclick="closeSheets()">취소</button>
     </div>

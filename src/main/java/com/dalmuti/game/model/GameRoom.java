@@ -39,6 +39,15 @@ public class GameRoom {
     private String currentTrickPlayerId = null;
     // 바닥 카드에 섞인 어릿광대 장수 (화면 표시용. 어릿광대만 낸 경우는 0)
     private int currentTrickJesterCount = 0;
+
+    // 차례 제한 시간: 차례가 넘어갈 때마다 turnSeq가 늘고, 새 차례를 처음 확인한 시각부터 시간을 잼
+    // (같은 사람에게 차례가 다시 돌아와도 새 차례로 인식되도록 사람이 아닌 횟수로 구분)
+    private long turnSeq = 0;
+    private long timerSeq = -1;
+    private Instant turnStartedAt;
+    // 시간 초과로 자동 패스된 플레이어와 횟수 (화면 알림용, 같은 사람이 연속으로 초과해도 구분되도록 횟수 포함)
+    private String timedOutPlayerId;
+    private long timeoutCount = 0;
     // 현재 바닥 카드를 낸 플레이어. 턴이 이 플레이어에게 돌아오면 나머지 전원이 패스한 것
     private int lastPlayerIndex = -1;
     private boolean isGameStarted = false;
@@ -63,7 +72,7 @@ public class GameRoom {
 
     // hostId가 null이면 처음 입장한 사람이 방장 (테스트용 기본 생성자)
     public GameRoom() {
-        this("test", null, RoomSettings.defaults(Duration.ofMinutes(1)));
+        this("test", null, RoomSettings.defaults(Duration.ofMinutes(1), Duration.ZERO));
     }
 
     public GameRoom(String code, String hostId, RoomSettings settings) {
@@ -294,6 +303,50 @@ public class GameRoom {
         return changed;
     }
 
+    // ---------- 차례 제한 시간 ----------
+
+    // 카드를 내는 단계인지 (자리 뽑기·혁명 결정·세금 교환이 끝난 뒤)
+    public synchronized boolean isPlayingPhase() {
+        return isGameStarted && !seatDrawPhase && !isRevolutionPending() && !isTaxPhase();
+    }
+
+    // 새 차례가 시작됐으면 타이머 시작. 상태를 보내기 전·스케줄러에서 호출
+    public synchronized void syncTurnTimer(Instant now) {
+        if (!isPlayingPhase()) {
+            timerSeq = -1;
+            turnStartedAt = null;
+            return;
+        }
+        if (timerSeq != turnSeq) {
+            timerSeq = turnSeq;
+            turnStartedAt = now;
+        }
+    }
+
+    // 지금 차례의 남은 시간(ms). 제한이 없거나 카드를 내는 단계가 아니면 -1
+    public synchronized long turnRemainingMillis(Instant now, Duration limit) {
+        if (limit.isZero() || turnStartedAt == null) return -1;
+        return Math.max(0, Duration.between(now, turnStartedAt.plus(limit)).toMillis());
+    }
+
+    // 제한 시간이 지나면 자동 패스 (선이면 선을 다음 사람에게 넘김). 바뀌었으면 true
+    public synchronized boolean enforceTurnTimeLimit(Instant now, Duration limit) {
+        syncTurnTimer(now);
+        if (limit.isZero() || turnStartedAt == null) return false;
+        // 아무도 접속해 있지 않으면 멈춰 둠 (돌아왔을 때 바로 넘어가지 않도록 시작 시각을 계속 미룸)
+        if (!hasConnectedPlayers()) {
+            turnStartedAt = now;
+            return false;
+        }
+        if (now.isBefore(turnStartedAt.plus(limit))) return false;
+
+        timedOutPlayerId = players.get(currentTurnIndex).getId();
+        timeoutCount++;
+        moveToNextTurn();
+        syncTurnTimer(now);
+        return true;
+    }
+
     private boolean isAway(Player p, Instant now, Duration grace) {
         return !p.isConnected() && p.getDisconnectedAt() != null
                 && !now.isBefore(p.getDisconnectedAt().plus(grace));
@@ -430,6 +483,7 @@ public class GameRoom {
         this.gameOver = false;
         this.finishOrder.clear();
         this.currentTurnIndex = 0;
+        this.turnSeq++;
         this.lastPlayerIndex = -1;
         clearTrick();
 
@@ -502,6 +556,7 @@ public class GameRoom {
         }
         players.sort(BY_RANK);
         this.currentTurnIndex = 0;
+        this.turnSeq++;
     }
 
     private Player findPlayerWithBothJesters() {
@@ -734,6 +789,7 @@ public class GameRoom {
             }
             if (!players.get(idx).getHand().isEmpty()) {
                 this.currentTurnIndex = idx;
+                this.turnSeq++;
                 return;
             }
         }

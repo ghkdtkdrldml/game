@@ -127,16 +127,94 @@ class GameRoomTest {
         assertEquals(List.of("d", "pm", "w", "s"), seatOrder(room));
     }
 
+    // ---------- 차례 제한 시간 ----------
+
+    private static final Duration LIMIT = Duration.ofSeconds(30);
+
+    @Test
+    void turnTimesOutToAutoPass() {
+        GameRoom room = startedRoom("a", "b", "c");
+        setHand(room, 0, COOK, PEASANT);
+        setHand(room, 1, KNIGHT);
+        setHand(room, 2, KNIGHT);
+        room.playCards("a", List.of(COOK));
+        room.syncTurnTimer(T0);  // b 차례 시작
+
+        assertFalse(room.enforceTurnTimeLimit(T0.plusSeconds(29), LIMIT));
+        assertEquals(1, room.getCurrentTurnIndex());
+        assertEquals(1000, room.turnRemainingMillis(T0.plusSeconds(29), LIMIT));
+
+        assertTrue(room.enforceTurnTimeLimit(T0.plusSeconds(30), LIMIT));
+        assertEquals(2, room.getCurrentTurnIndex());  // b 자동 패스 → c
+        assertEquals("b", room.getTimedOutPlayerId());
+        assertEquals(1, room.getTimeoutCount());
+        assertEquals(COOK, room.getCurrentTrickType());  // 바닥은 그대로
+        // c는 새로 30초
+        assertEquals(30_000, room.turnRemainingMillis(T0.plusSeconds(30), LIMIT));
+    }
+
+    @Test
+    void leadTimeoutPassesLeadToNextPlayer() {
+        GameRoom room = startedRoom("a", "b");
+        room.syncTurnTimer(T0);  // a가 선
+
+        assertTrue(room.enforceTurnTimeLimit(T0.plus(LIMIT), LIMIT));
+        assertEquals(1, room.getCurrentTurnIndex());
+        assertEquals(0, room.getCurrentTrickCount());
+    }
+
+    @Test
+    void timerRestartsWhenSamePlayerGetsTurnAgain() {
+        GameRoom room = startedRoom("a", "b");
+        setHand(room, 0, COOK, PEASANT);
+        setHand(room, 1, PEASANT);
+        room.syncTurnTimer(T0);
+        room.playCards("a", List.of(COOK));
+        room.syncTurnTimer(T0.plusSeconds(20));
+        room.pass("b");                          // 다시 a 차례 (같은 사람이지만 새 차례)
+        room.syncTurnTimer(T0.plusSeconds(25));
+
+        assertEquals(0, room.getCurrentTurnIndex());
+        assertEquals(30_000, room.turnRemainingMillis(T0.plusSeconds(25), LIMIT));
+    }
+
+    @Test
+    void noTimerOutsidePlayingPhaseOrWithoutLimit() {
+        GameRoom room = rankedRoom();
+        room.startGame("d", SERF_GETS_JESTERS);  // 혁명 결정 단계
+        room.syncTurnTimer(T0);
+        assertFalse(room.enforceTurnTimeLimit(T0.plusSeconds(600), LIMIT));
+        assertEquals(-1, room.turnRemainingMillis(T0, LIMIT));
+
+        GameRoom playing = startedRoom("a", "b");
+        playing.syncTurnTimer(T0);
+        assertFalse(playing.enforceTurnTimeLimit(T0.plusSeconds(600), Duration.ZERO));  // 제한 없음
+    }
+
+    @Test
+    void timerPausesWhileEveryoneIsAway() {
+        GameRoom room = startedRoom("a", "b");
+        room.syncTurnTimer(T0);
+        room.disconnectPlayer("a", T0);
+        room.disconnectPlayer("b", T0);
+
+        assertFalse(room.enforceTurnTimeLimit(T0.plusSeconds(300), LIMIT));
+        // 돌아오면 그 시점부터 다시 30초
+        room.addPlayer(new Player("a", "a"));
+        assertFalse(room.enforceTurnTimeLimit(T0.plusSeconds(310), LIMIT));
+        assertTrue(room.enforceTurnTimeLimit(T0.plusSeconds(330), LIMIT));
+    }
+
     @Test
     void settingsAreHostOnlyAndValidated() {
         GameRoom room = lobby("a", "b", "c");
-        RoomSettings strict = new RoomSettings(Duration.ofSeconds(30), 4, false);
+        RoomSettings strict = new RoomSettings(Duration.ofSeconds(30), Duration.ofSeconds(30), 4, false);
         assertThrows(GameException.class, () -> room.updateSettings("b", strict));
         room.updateSettings("a", strict);
 
-        assertThrows(GameException.class, () -> room.updateSettings("a", new RoomSettings(Duration.ofSeconds(30), 2, true)));  // 현재 3명
-        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(5), 4, true));
-        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(30), 11, true));
+        assertThrows(GameException.class, () -> room.updateSettings("a", new RoomSettings(Duration.ofSeconds(30), Duration.ofSeconds(30), 2, true)));  // 현재 3명
+        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(5), Duration.ofSeconds(30), 4, true));
+        assertThrows(GameException.class, () -> new RoomSettings(Duration.ofSeconds(30), Duration.ofSeconds(30), 11, true));
 
         // 게임 중 입장 불가 설정
         room.startGame("a");
@@ -146,7 +224,7 @@ class GameRoomTest {
     @Test
     void maxPlayersSettingLimitsJoin() {
         GameRoom room = lobby("a", "b");
-        room.updateSettings("a", new RoomSettings(Duration.ofMinutes(1), 2, true));
+        room.updateSettings("a", new RoomSettings(Duration.ofMinutes(1), Duration.ofSeconds(30), 2, true));
         assertThrows(GameException.class, () -> room.addPlayer(new Player("c", "c")));
     }
 

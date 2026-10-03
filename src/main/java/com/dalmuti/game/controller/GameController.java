@@ -98,7 +98,8 @@ public class GameController {
     @MessageMapping("/room/{code}/settings")
     public void updateSettings(@DestinationVariable String code, SettingsRequest request, Principal principal) {
         act(code, principal, (room, playerId) -> room.updateSettings(playerId, new RoomSettings(
-                Duration.ofSeconds(request.disconnectGraceSeconds()), request.maxPlayers(), request.allowLateJoin())));
+                Duration.ofSeconds(request.disconnectGraceSeconds()), Duration.ofSeconds(request.turnTimeLimitSeconds()),
+                request.maxPlayers(), request.allowLateJoin())));
     }
 
     // 방을 찾아 방 락 안에서 처리하고 상태를 전송
@@ -121,6 +122,7 @@ public class GameController {
                 Instant now = Instant.now();
                 Duration grace = room.getSettings().disconnectGrace();
                 boolean changed = room.actForAwayPlayers(now, grace);
+                changed |= room.enforceTurnTimeLimit(now, room.getSettings().turnTimeLimit());
                 changed |= room.updateHost(now, grace);
                 if (changed) broadcast(room);
             }
@@ -150,6 +152,8 @@ public class GameController {
 
     // 공개 상태는 방 전체에, 손패·세금 내역은 각 플레이어(대기자 포함)에게만 전송
     private void broadcast(GameRoom room) {
+        // 차례가 바뀌었으면 이 시점부터 제한 시간을 재서 남은 시간을 함께 보냄
+        room.syncTurnTimer(Instant.now());
         messagingTemplate.convertAndSend("/topic/room/" + room.getCode(), RoomState.from(room));
         for (Player p : room.allMembers()) {
             messagingTemplate.convertAndSendToUser(p.getId(), "/queue/private", PrivateState.of(room, p));

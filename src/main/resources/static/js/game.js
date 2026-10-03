@@ -3,6 +3,8 @@
 
 const RECONNECT_DELAY_MS = 3000;
 const TOAST_MS = 2500;
+const VIBRATE_KEY = 'dalmuti.vibrate';  // 진동 설정 (이 기기 localStorage에 저장, 기본 켜짐)
+const URGENT_SECONDS = 10;              // 남은 시간이 이 이하면 빨갛게 표시
 const MIN_PLAYERS = 2;
 
 const roomCode = GAME_CONFIG.roomCode;
@@ -19,6 +21,7 @@ let leaving = false;   // 강퇴·방 없음으로 홈으로 이동 중이면 �
 let room = null;       // 방 공개 상태 (/topic/room/{방 코드})
 let me = null;         // 내 손패, 세금 내역 (/user/queue/private)
 let selected = {};     // 선택한 카드 종류 → 장수
+let turnDeadline = null;  // 지금 차례가 끝나는 시각 (이 기기 시계 기준, 제한 없으면 null)
 
 const $ = id => document.getElementById(id);
 
@@ -45,7 +48,7 @@ function connect() {
             selected = {};
             if (!prevMe?.canDecideRevolution && me.canDecideRevolution) {
                 toast('어릿광대 2장! 혁명을 선언할 수 있습니다', 'turn');
-                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                buzz([100, 50, 100]);
             }
             render();
         });
@@ -115,13 +118,24 @@ function send(destination, body) {
 function onRoomState(next) {
     const prev = room;
     room = next;
+    // 서버는 남은 시간을 보내므로 받은 시점 기준으로 끝나는 시각 계산 (기기마다 시계가 달라도 정확)
+    turnDeadline = next.turnRemainingMs >= 0 ? Date.now() + next.turnRemainingMs : null;
+
+    if (prev && next.timeoutCount > prev.timeoutCount && next.timedOutPlayerId) {
+        if (next.timedOutPlayerId === myPlayerId) {
+            log('⏰ 시간 초과로 자동 패스되었습니다.');
+            toast('⏰ 시간 초과로 자동 패스되었습니다', 'error');
+        } else {
+            log(`⏰ ${playerName(next.timedOutPlayerId)} 님 시간 초과로 자동 패스`);
+        }
+    }
 
     // 상태 변화 알림
     if (!prev?.seatDrawPhase && next.seatDrawPhase) flippedSeatCard = null;
     if (!prev?.seatDrawPhase && next.seatDrawPhase && !amWaiting(next)) {
         log('🎴 자리 뽑기를 시작합니다. 숫자가 낮은 카드를 뽑을수록 높은 신분이 됩니다.');
         toast('자리 뽑기! 카드를 뽑아 신분을 정합니다', 'turn');
-        if (navigator.vibrate) navigator.vibrate(150);
+        buzz(150);
     }
     if (prev?.seatDrawPhase && !next.seatDrawPhase && next.gameStarted) {
         const result = [...next.players]
@@ -161,7 +175,8 @@ function onRoomState(next) {
     if (prev && JSON.stringify(prev.settings) !== JSON.stringify(next.settings)) {
         const s = next.settings;
         const grace = s.disconnectGraceSeconds % 60 === 0 ? `${s.disconnectGraceSeconds / 60}분` : `${s.disconnectGraceSeconds}초`;
-        const msg = `⚙️ 방 설정 변경: 대기 ${grace} · 최대 ${s.maxPlayers}명 · 게임 중 입장 ${s.allowLateJoin ? '허용' : '불가'}`;
+        const limit = s.turnTimeLimitSeconds > 0 ? durationText(s.turnTimeLimitSeconds) : '없음';
+        const msg = `⚙️ 방 설정 변경: 차례 제한 ${limit} · 연결 대기 ${grace} · 최대 ${s.maxPlayers}명 · 게임 중 입장 ${s.allowLateJoin ? '허용' : '불가'}`;
         log(msg);
         toast(msg);
     }
@@ -171,7 +186,7 @@ function onRoomState(next) {
     }
     if (!isMyTurn(prev) && isMyTurn(next)) {
         toast('내 차례입니다!', 'turn');
-        if (navigator.vibrate) navigator.vibrate(150);
+        buzz(150);
     }
 
     render();
@@ -415,6 +430,12 @@ function renderStatus() {
         const mine = isMyTurn(room);
         turn.classList.toggle('mine', mine);
         turn.textContent = mine ? '🔔 내 차례!' : `${playerName(room.players[room.currentTurnIndex].id)} 님 차례`;
+        // 남은 시간은 updateCountdown()이 매초 갱신
+        const timer = document.createElement('span');
+        timer.id = 'turnTimer';
+        timer.className = 'turn-timer';
+        turn.append(timer);
+        updateCountdown();
     }
 }
 
@@ -447,6 +468,13 @@ function renderPlayers() {
         meta.append(`${rankLabel(p)} · `, cardBack(10, 'mini'), `${p.handCount}장`);
 
         chip.append(name, meta);
+
+        // 현재 차례인 사람 칩에 남은 시간 (updateCountdown()이 갱신)
+        if (chip.classList.contains('turn')) {
+            const chipTimer = document.createElement('div');
+            chipTimer.className = 'chip-timer';
+            chip.append(chipTimer);
+        }
 
         if (room.seatDrawPhase) {
             const drawn = room.seatDraws[p.id];
@@ -781,6 +809,7 @@ function openSettings() {
     $('userMenu').open = false;
     const s = room.settings;
     $('setGrace').value = String(s.disconnectGraceSeconds);
+    $('setTurnLimit').value = String(s.turnTimeLimitSeconds);
     const max = $('setMaxPlayers');
     max.replaceChildren();
     for (let n = MIN_PLAYERS; n <= 10; n++) max.append(new Option(`${n}명`, n));
@@ -792,11 +821,65 @@ function openSettings() {
 function saveSettings() {
     send(roomDest('settings'), {
         disconnectGraceSeconds: Number($('setGrace').value),
+        turnTimeLimitSeconds: Number($('setTurnLimit').value),
         maxPlayers: Number($('setMaxPlayers').value),
         allowLateJoin: $('setLateJoin').checked
     });
     closeSheets();
 }
+
+// ---------------- 차례 남은 시간 ----------------
+
+function durationText(seconds) {
+    if (seconds < 60) return `${seconds}초`;
+    return seconds % 60 === 0 ? `${seconds / 60}분` : `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
+}
+
+// 차례 표시와 현재 차례 플레이어 칩에 남은 초를 표시. 10초 이하면 빨갛게
+function updateCountdown() {
+    const seconds = turnDeadline === null ? null : Math.max(0, Math.ceil((turnDeadline - Date.now()) / 1000));
+    const text = seconds === null ? '' : ` ⏱ ${seconds}초`;
+    const urgent = seconds !== null && seconds <= URGENT_SECONDS;
+
+    const timer = $('turnTimer');
+    if (timer) {
+        timer.textContent = text;
+        timer.classList.toggle('urgent', urgent);
+    }
+    const chipTimer = document.querySelector('.player-chip.turn .chip-timer');
+    if (chipTimer) {
+        chipTimer.textContent = text;
+        chipTimer.classList.toggle('urgent', urgent);
+    }
+}
+
+setInterval(updateCountdown, 250);
+
+// ---------------- 진동 ----------------
+
+function vibrationOn() {
+    return localStorage.getItem(VIBRATE_KEY) !== 'off';
+}
+
+// 진동을 지원하고 켜 둔 경우에만 진동 (iOS Safari는 진동을 지원하지 않음)
+function buzz(pattern) {
+    if (navigator.vibrate && vibrationOn()) navigator.vibrate(pattern);
+}
+
+function toggleVibration() {
+    localStorage.setItem(VIBRATE_KEY, vibrationOn() ? 'off' : 'on');
+    renderVibrationMenu();
+    if (vibrationOn()) buzz(80);  // 켰을 때 확인용으로 짧게
+    toast(vibrationOn() ? '📳 내 차례에 진동이 울립니다' : '진동을 껐습니다');
+}
+
+function renderVibrationMenu() {
+    const btn = $('menuVibrate');
+    btn.classList.toggle('hidden', !navigator.vibrate);
+    btn.textContent = vibrationOn() ? '📳 진동 켜짐' : '📴 진동 꺼짐';
+}
+
+window.addEventListener('load', renderVibrationMenu);
 
 // ---------------- 알림 ----------------
 

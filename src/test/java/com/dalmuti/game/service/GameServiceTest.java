@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class GameServiceTest {
 
     private static final Duration TTL = Duration.ofMinutes(5);
-    private final GameService service = new GameService(Duration.ofMinutes(1), TTL);
+    private final GameService service = new GameService(Duration.ofMinutes(1), Duration.ofSeconds(30), TTL);
 
     private List<String> playerIds(GameRoom room) {
         return room.getPlayers().stream().map(Player::getId).toList();

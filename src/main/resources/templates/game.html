@@ -26,8 +26,8 @@
             <details id="userMenu" class="user-menu">
                 <summary th:text="${playerName} + ' ▾'">플레이어 ▾</summary>
                 <div class="menu-items">
-                    <!-- 내 차례 진동 (진동을 지원하는 기기에서만 표시, 설정은 이 기기에 저장) -->
-                    <button type="button" id="menuVibrate" class="btn-ghost hidden" onclick="toggleVibration()">📳 진동 켜짐</button>
+                    <!-- 알림음 (설정은 이 기기에 저장) -->
+                    <button type="button" id="menuSound" class="btn-ghost" onclick="toggleSound()">🔊 소리 켜짐</button>
                     <!-- 방장 전용 -->
                     <button type="button" id="menuSettings" class="btn-ghost hidden" onclick="openSettings()">⚙️ 방 설정</button>
                     <button type="button" id="menuAbort" class="btn-ghost hidden" onclick="abortRound()">⏹ 판 중단</button>

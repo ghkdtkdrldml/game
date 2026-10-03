@@ -3,8 +3,9 @@
 
 const RECONNECT_DELAY_MS = 3000;
 const TOAST_MS = 2500;
-const VIBRATE_KEY = 'dalmuti.vibrate';  // 진동 설정 (이 기기 localStorage에 저장, 기본 켜짐)
-const URGENT_SECONDS = 10;              // 남은 시간이 이 이하면 빨갛게 표시
+const URGENT_SECONDS = 10;              // 남은 시간이 이 이하면 빨갛게 표시 + 경고음
+const TICK_SECONDS = 5;                 // 내 차례 마지막 몇 초 동안 째깍 소리
+const SOUND_KEY = 'dalmuti.sound';      // 소리 설정 (이 기기 localStorage에 저장, 기본 켜짐)
 const MIN_PLAYERS = 2;
 
 const roomCode = GAME_CONFIG.roomCode;
@@ -22,6 +23,7 @@ let room = null;       // 방 공개 상태 (/topic/room/{방 코드})
 let me = null;         // 내 손패, 세금 내역 (/user/queue/private)
 let selected = {};     // 선택한 카드 종류 → 장수
 let turnDeadline = null;  // 지금 차례가 끝나는 시각 (이 기기 시계 기준, 제한 없으면 null)
+let lastAlertSecond = null;  // 경고음·째깍 소리를 낸 마지막 초 (같은 초에 여러 번 울리지 않도록)
 
 const $ = id => document.getElementById(id);
 
@@ -48,7 +50,6 @@ function connect() {
             selected = {};
             if (!prevMe?.canDecideRevolution && me.canDecideRevolution) {
                 toast('어릿광대 2장! 혁명을 선언할 수 있습니다', 'turn');
-                buzz([100, 50, 100]);
             }
             render();
         });
@@ -120,6 +121,7 @@ function onRoomState(next) {
     room = next;
     // 서버는 남은 시간을 보내므로 받은 시점 기준으로 끝나는 시각 계산 (기기마다 시계가 달라도 정확)
     turnDeadline = next.turnRemainingMs >= 0 ? Date.now() + next.turnRemainingMs : null;
+    if (isMyTurn(next) && !isMyTurn(prev)) lastAlertSecond = null;
 
     if (prev && next.timeoutCount > prev.timeoutCount && next.timedOutPlayerId) {
         if (next.timedOutPlayerId === myPlayerId) {
@@ -135,7 +137,6 @@ function onRoomState(next) {
     if (!prev?.seatDrawPhase && next.seatDrawPhase && !amWaiting(next)) {
         log('🎴 자리 뽑기를 시작합니다. 숫자가 낮은 카드를 뽑을수록 높은 신분이 됩니다.');
         toast('자리 뽑기! 카드를 뽑아 신분을 정합니다', 'turn');
-        buzz(150);
     }
     if (prev?.seatDrawPhase && !next.seatDrawPhase && next.gameStarted) {
         const result = [...next.players]
@@ -186,7 +187,7 @@ function onRoomState(next) {
     }
     if (!isMyTurn(prev) && isMyTurn(next)) {
         toast('내 차례입니다!', 'turn');
-        buzz(150);
+        playSound('turn');
     }
 
     render();
@@ -851,35 +852,94 @@ function updateCountdown() {
         chipTimer.textContent = text;
         chipTimer.classList.toggle('urgent', urgent);
     }
+
+    // 내 차례일 때만: 10초 남으면 경고음, 마지막 5초는 매초 째깍
+    if (seconds !== null && isMyTurn(room) && seconds !== lastAlertSecond) {
+        if (seconds === URGENT_SECONDS) playSound('warning');
+        else if (seconds > 0 && seconds <= TICK_SECONDS) playSound('tick');
+        lastAlertSecond = seconds;
+    }
 }
 
 setInterval(updateCountdown, 250);
 
-// ---------------- 진동 ----------------
+// ---------------- 소리 ----------------
+// 소리 파일 없이 Web Audio API로 짧은 신호음을 만들어 냄 (용량·라이선스 부담 없음)
 
-function vibrationOn() {
-    return localStorage.getItem(VIBRATE_KEY) !== 'off';
+let audioCtx = null;
+
+function soundOn() {
+    return localStorage.getItem(SOUND_KEY) !== 'off';
 }
 
-// 진동을 지원하고 켜 둔 경우에만 진동 (iOS Safari는 진동을 지원하지 않음)
-function buzz(pattern) {
-    if (navigator.vibrate && vibrationOn()) navigator.vibrate(pattern);
+// 모바일 브라우저는 사용자가 화면을 탭한 뒤에만 소리를 낼 수 있음.
+// 탭할 때마다 오디오를 준비/재개해 둠 (앱 전환 후 돌아오면 브라우저가 멈춰 두기도 하므로 매번 확인)
+function ensureAudio() {
+    if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        audioCtx = new Ctx();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
 }
 
-function toggleVibration() {
-    localStorage.setItem(VIBRATE_KEY, vibrationOn() ? 'off' : 'on');
-    renderVibrationMenu();
-    if (vibrationOn()) buzz(80);  // 켰을 때 확인용으로 짧게
-    toast(vibrationOn() ? '📳 내 차례에 진동이 울립니다' : '진동을 껐습니다');
+['pointerdown', 'touchend', 'keydown'].forEach(type =>
+    document.addEventListener(type, ensureAudio, { passive: true }));
+
+// 부드럽게 시작하고 사라지는 단음 하나
+function tone(ctx, frequency, startAt, duration, wave, volume) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = wave;
+    osc.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, startAt);
+    gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(startAt);
+    osc.stop(startAt + duration + 0.02);
 }
 
-function renderVibrationMenu() {
-    const btn = $('menuVibrate');
-    btn.classList.toggle('hidden', !navigator.vibrate);
-    btn.textContent = vibrationOn() ? '📳 진동 켜짐' : '📴 진동 꺼짐';
+const SOUNDS = {
+    // 내 차례: 딩-동 (올라가는 두 음)
+    turn: ctx => {
+        const t = ctx.currentTime;
+        tone(ctx, 880, t, 0.18, 'sine', 0.25);
+        tone(ctx, 1320, t + 0.15, 0.3, 'sine', 0.25);
+    },
+    // 10초 남음: 짧게 두 번
+    warning: ctx => {
+        const t = ctx.currentTime;
+        tone(ctx, 660, t, 0.12, 'triangle', 0.22);
+        tone(ctx, 660, t + 0.18, 0.12, 'triangle', 0.22);
+    },
+    // 마지막 몇 초: 작은 째깍
+    tick: ctx => tone(ctx, 1000, ctx.currentTime, 0.05, 'square', 0.06)
+};
+
+// 소리를 켜 두었고 오디오가 준비된 경우에만 재생 (아직 한 번도 탭하지 않았으면 조용히 건너뜀)
+function playSound(name) {
+    if (!soundOn() || !audioCtx || audioCtx.state !== 'running') return;
+    SOUNDS[name](audioCtx);
 }
 
-window.addEventListener('load', renderVibrationMenu);
+function toggleSound() {
+    localStorage.setItem(SOUND_KEY, soundOn() ? 'off' : 'on');
+    renderSoundMenu();
+    if (soundOn()) {
+        ensureAudio();
+        // resume()이 끝난 뒤 재생되도록 잠깐 뒤에 확인용 소리
+        setTimeout(() => playSound('turn'), 50);
+    }
+    toast(soundOn() ? '🔊 내 차례와 남은 시간을 소리로 알려줍니다' : '🔇 소리를 껐습니다');
+}
+
+function renderSoundMenu() {
+    $('menuSound').textContent = soundOn() ? '🔊 소리 켜짐' : '🔇 소리 꺼짐';
+}
+
+window.addEventListener('load', renderSoundMenu);
 
 // ---------------- 알림 ----------------
 

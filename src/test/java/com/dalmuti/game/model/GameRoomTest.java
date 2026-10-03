@@ -288,6 +288,129 @@ class GameRoomTest {
         assertEquals(1, room.getCurrentTurnIndex());
     }
 
+    // ---------- 평민 순서 (1등 시민, 2등 시민 ...) ----------
+
+    @Test
+    void citizensAreNumberedByFinishOrder() {
+        // 6인: 앞 사람보다 낮은 카드를 한 장씩 내며 차례대로 1등~5등, 남은 f가 꼴찌
+        GameRoom room = startedRoom("a", "b", "c", "d", "e", "f");
+        setHand(room, 0, STONECUTTER);
+        setHand(room, 1, COOK);
+        setHand(room, 2, KNIGHT);
+        setHand(room, 3, BARONESS);
+        setHand(room, 4, ARCHBISHOP);
+        setHand(room, 5, PEASANT);
+        room.playCards("a", List.of(STONECUTTER));
+        room.playCards("b", List.of(COOK));
+        room.playCards("c", List.of(KNIGHT));
+        room.playCards("d", List.of(BARONESS));
+        room.playCards("e", List.of(ARCHBISHOP));
+
+        assertTrue(room.isGameOver());
+        assertEquals(Rank.GREAT_DALMUTI, player(room, "a").getRank());
+        assertEquals(Rank.PRIME_MINISTER, player(room, "b").getRank());
+        assertEquals(Rank.CITIZEN, player(room, "c").getRank());
+        assertEquals(1, player(room, "c").getCitizenNo());  // 3등 = 1등 시민
+        assertEquals(2, player(room, "d").getCitizenNo());  // 4등 = 2등 시민
+        assertEquals(Rank.TENANT_FARMER, player(room, "e").getRank());
+        assertEquals(0, player(room, "e").getCitizenNo());
+        assertEquals(Rank.SERF, player(room, "f").getRank());
+    }
+
+    @Test
+    void nextRoundSeatsCitizensByNumberNotPreviousSeat() {
+        // 이전 판 자리는 c가 d보다 앞이지만, 이번 순위는 d가 1등 시민 → 다음 판은 d가 앞
+        GameRoom room = new GameRoom();
+        String[] ids = {"a", "b", "c", "d", "e", "f"};
+        Rank[] ranks = {Rank.GREAT_DALMUTI, Rank.PRIME_MINISTER, Rank.CITIZEN, Rank.CITIZEN, Rank.TENANT_FARMER, Rank.SERF};
+        int[] citizenNos = {0, 0, 2, 1, 0, 0};
+        for (int i = 0; i < ids.length; i++) {
+            Player p = new Player(ids[i], ids[i]);
+            p.setRank(ranks[i]);
+            p.setCitizenNo(citizenNos[i]);
+            room.addPlayer(p);
+        }
+        room.startGame("a", GameRoom.newShuffledDeck());
+
+        assertEquals(List.of("a", "b", "d", "c", "e", "f"), seatOrder(room));
+    }
+
+    @Test
+    void newcomerCitizenSitsAfterNumberedCitizens() {
+        GameRoom room = new GameRoom();
+        Player d = new Player("d", "d");
+        d.setRank(Rank.GREAT_DALMUTI);
+        Player c1 = new Player("c1", "c1");
+        c1.setCitizenNo(1);
+        Player s = new Player("s", "s");
+        s.setRank(Rank.SERF);
+        room.addPlayer(d);
+        room.addPlayer(new Player("new", "new"));  // 번호 없는 평민 (판 사이에 새로 들어옴)
+        room.addPlayer(c1);
+        room.addPlayer(s);
+        room.startGame("d", GameRoom.newShuffledDeck());
+
+        assertEquals(List.of("d", "c1", "new", "s"), seatOrder(room));
+    }
+
+    @Test
+    void seatDrawNumbersCitizens() {
+        GameRoom room = lobby("a", "b", "c", "d", "e", "f");
+        room.startSeatDraw("a", List.of(DALMUTI, ARCHBISHOP, EARL_MARSHAL, BARONESS, ABBESS, KNIGHT));
+        for (String id : List.of("a", "b", "c", "d", "e", "f")) room.drawSeatCard(id);
+
+        assertEquals(1, player(room, "c").getCitizenNo());
+        assertEquals(2, player(room, "d").getCitizenNo());
+        assertEquals(List.of("a", "b", "c", "d", "e", "f"), seatOrder(room));
+    }
+
+    @Test
+    void greatRevolutionReversesCitizenOrderToo() {
+        GameRoom room = new GameRoom();
+        String[] ids = {"d", "pm", "c1", "c2", "tf", "s"};
+        Rank[] ranks = {Rank.GREAT_DALMUTI, Rank.PRIME_MINISTER, Rank.CITIZEN, Rank.CITIZEN, Rank.TENANT_FARMER, Rank.SERF};
+        int[] citizenNos = {0, 0, 1, 2, 0, 0};
+        for (int i = 0; i < ids.length; i++) {
+            Player p = new Player(ids[i], ids[i]);
+            p.setRank(ranks[i]);
+            p.setCitizenNo(citizenNos[i]);
+            room.addPlayer(p);
+        }
+        // 6명에게 번갈아 배분 → 5, 11번째 카드가 농노(s)에게
+        room.startGame("d", List.of(
+                DALMUTI, ARCHBISHOP, COOK, PEASANT, KNIGHT, JESTER,
+                MASON, MASON, MASON, MASON, MASON, JESTER));
+        room.decideRevolution("s", true);
+
+        assertEquals(List.of("s", "tf", "c2", "c1", "pm", "d"), seatOrder(room));
+        assertEquals(1, player(room, "c2").getCitizenNo());
+        assertEquals(2, player(room, "c1").getCitizenNo());
+    }
+
+    @Test
+    void trickCountsJestersMixedIn() {
+        GameRoom room = startedRoom("a", "b");
+        setHand(room, 0, COOK, COOK, JESTER, PEASANT);
+        setHand(room, 1, JESTER, JESTER, KNIGHT);
+
+        room.playCards("a", List.of(COOK, COOK, JESTER));
+        assertEquals(COOK, room.getCurrentTrickType());
+        assertEquals(3, room.getCurrentTrickCount());
+        assertEquals(1, room.getCurrentTrickJesterCount());
+
+        // 바닥이 비면 초기화
+        room.pass("b");
+        assertEquals(0, room.getCurrentTrickJesterCount());
+
+        // 어릿광대만 낸 경우는 어릿광대 카드 자체로 표시되므로 "포함" 장수는 0
+        GameRoom other = startedRoom("x", "y");
+        setHand(other, 0, JESTER, JESTER, PEASANT);
+        setHand(other, 1, KNIGHT);
+        other.playCards("x", List.of(JESTER, JESTER));
+        assertEquals(JESTER, other.getCurrentTrickType());
+        assertEquals(0, other.getCurrentTrickJesterCount());
+    }
+
     @Test
     void trickRemembersWhoPlayedUntilCleared() {
         GameRoom room = startedRoom("a", "b", "c");

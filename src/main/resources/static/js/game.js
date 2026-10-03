@@ -127,11 +127,11 @@ function onRoomState(next) {
         const result = [...next.players]
             .filter(p => next.seatDraws[p.id])
             .sort((a, b) => cardInfo[next.seatDraws[a.id]].value - cardInfo[next.seatDraws[b.id]].value)
-            .map(p => `${cardInfo[next.seatDraws[p.id]].value} ${p.name}(${rankNames[p.rank]})`)
+            .map(p => `${cardInfo[next.seatDraws[p.id]].value} ${p.name}(${rankLabel(p)})`)
             .join(', ');
         log('🎴 자리 뽑기 결과: ' + result);
-        const myRank = next.players.find(p => p.id === myPlayerId)?.rank;
-        if (myRank) toast(`자리 결정! 나는 ${rankNames[myRank]} — 첫 판은 세금 없이 시작합니다`, 'turn');
+        const meNow = next.players.find(p => p.id === myPlayerId);
+        if (meNow) toast(`자리 결정! 나는 ${rankLabel(meNow)} — 첫 판은 세금 없이 시작합니다`, 'turn');
     }
     if (!prev?.revolution && next.revolution) {
         const msg = revolutionMessage(next);
@@ -145,8 +145,8 @@ function onRoomState(next) {
     }
     if (!prev?.gameOver && next.gameOver) {
         const place = next.finishOrder.indexOf(myPlayerId);
-        const myRank = next.players.find(p => p.id === myPlayerId)?.rank;
-        const result = place >= 0 ? `나는 ${place + 1}등 (${rankNames[myRank] || ''})` : '';
+        const meNow = next.players.find(p => p.id === myPlayerId);
+        const result = place >= 0 && meNow ? `나는 ${place + 1}등 (${rankLabel(meNow)})` : '';
         log('🏁 게임 종료! ' + result);
         toast('게임 종료! ' + result);
     }
@@ -195,6 +195,12 @@ function amWaiting(r) {
 function graceText() {
     const s = room.settings.disconnectGraceSeconds;
     return s % 60 === 0 ? `${s / 60}분` : `${s}초`;
+}
+
+// 신분 표시. 평민은 순서 번호가 있으면 "1등 시민", "2등 시민" ...
+function rankLabel(p) {
+    if (p.rank === 'CITIZEN' && p.citizenNo > 0) return `${p.citizenNo}등 시민`;
+    return rankNames[p.rank] || '평민';
 }
 
 function amHost(r) {
@@ -364,6 +370,14 @@ function renderStatus() {
         row.append(cardFace(room.currentTrickType, 84), count);
         trick.append(row);
 
+        // 어릿광대를 섞어 낸 경우 몇 장인지 (예: 요리사 ×3 = 요리사 2장 + 어릿광대 1장)
+        if (room.currentTrickJesterCount > 0) {
+            const jester = document.createElement('div');
+            jester.className = 'trick-jester';
+            jester.textContent = `🃏 어릿광대 ${room.currentTrickJesterCount}장 포함`;
+            trick.append(jester);
+        }
+
         // 누가 냈는지 (이름은 사용자 입력이므로 textContent)
         if (room.currentTrickPlayerId) {
             const by = document.createElement('div');
@@ -430,7 +444,7 @@ function renderPlayers() {
         // 신분 · (작은 카드 뒷면) 남은 장수
         const meta = document.createElement('div');
         meta.className = 'p-meta';
-        meta.append(`${rankNames[p.rank] || '평민'} · `, cardBack(10, 'mini'), `${p.handCount}장`);
+        meta.append(`${rankLabel(p)} · `, cardBack(10, 'mini'), `${p.handCount}장`);
 
         chip.append(name, meta);
 

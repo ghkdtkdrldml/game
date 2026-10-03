@@ -128,6 +128,7 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .trick-count { font-size: 22px; font-weight: bold; }
 .trick-text { color: var(--muted); }
 .trick-by { font-size: 14px; font-weight: bold; color: var(--gold-light); }
+.trick-jester { font-size: 13px; font-weight: bold; color: #d7b8f3; }
 .turn-text { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--panel-2); font-weight: bold; }
 .turn-text.mine { background: var(--accent); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.75; } }

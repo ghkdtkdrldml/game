@@ -23,6 +23,8 @@ public record RoomState(
         int currentTrickCount,
         // 바닥 카드를 낸 플레이어 (바닥이 비면 null)
         String currentTrickPlayerId,
+        // 바닥 카드에 섞인 어릿광대 장수 (어릿광대만 낸 경우는 0)
+        int currentTrickJesterCount,
         boolean gameStarted,
         boolean gameOver,
         List<String> finishOrder,
@@ -39,9 +41,10 @@ public record RoomState(
         Map<String, CardType> seatDraws
 ) {
     // kicked: 게임 중 강퇴되어 이번 판은 자동 패스, 판이 끝나면 제거됨
-    public record PlayerView(String id, String name, Rank rank, int handCount, boolean connected, boolean kicked) {
+    // citizenNo: 평민끼리의 순서 (1등 시민 = 1). 0이면 번호 없음
+    public record PlayerView(String id, String name, Rank rank, int citizenNo, int handCount, boolean connected, boolean kicked) {
         static PlayerView from(Player p) {
-            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getHand().size(), p.isConnected(), p.isKicked());
+            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getCitizenNo(), p.getHand().size(), p.isConnected(), p.isKicked());
         }
     }
 
@@ -62,6 +65,7 @@ public record RoomState(
                 room.getCurrentTrickType(),
                 room.getCurrentTrickCount(),
                 room.getCurrentTrickPlayerId(),
+                room.getCurrentTrickJesterCount(),
                 room.isGameStarted(),
                 room.isGameOver(),
                 List.copyOf(room.getFinishOrder()),

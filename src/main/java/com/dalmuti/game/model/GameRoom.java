@@ -19,7 +19,14 @@ public class GameRoom {
     // 강퇴된 플레이어 (같은 방에 다시 들어올 수 없음)
     private final Set<String> kickedIds = new HashSet<>();
     // 판 시작 시점의 신분 (판 중단 시 되돌리기용. 자리 뽑기·대혁명으로 판 도중 신분이 바뀔 수 있음)
-    private final Map<String, Rank> ranksAtStart = new HashMap<>();
+    private final Map<String, RankAtStart> ranksAtStart = new HashMap<>();
+
+    private record RankAtStart(Rank rank, int citizenNo) {}
+
+    // 신분 순 자리: 신분 → 평민 번호 순 (번호 없는 평민은 번호 있는 평민 뒤)
+    private static final Comparator<Player> BY_RANK = Comparator
+            .comparingInt((Player p) -> p.getRank().getOrder())
+            .thenComparingInt(p -> p.getCitizenNo() == 0 ? Integer.MAX_VALUE : p.getCitizenNo());
 
     private final List<Player> players = new ArrayList<>();
     // 게임 도중 들어와 다음 판을 기다리는 사람 (관전). 판이 끝나면 players로 합류
@@ -30,6 +37,8 @@ public class GameRoom {
     private int currentTrickCount = 0;
     // 지금 바닥에 깔린 카드를 낸 플레이어 (화면 표시용, 바닥이 비면 null)
     private String currentTrickPlayerId = null;
+    // 바닥 카드에 섞인 어릿광대 장수 (화면 표시용. 어릿광대만 낸 경우는 0)
+    private int currentTrickJesterCount = 0;
     // 현재 바닥 카드를 낸 플레이어. 턴이 이 플레이어에게 돌아오면 나머지 전원이 패스한 것
     private int lastPlayerIndex = -1;
     private boolean isGameStarted = false;
@@ -151,8 +160,11 @@ public class GameRoom {
 
         for (Player p : players) {
             p.getHand().clear();
-            Rank before = ranksAtStart.get(p.getId());
-            if (before != null) p.setRank(before);
+            RankAtStart before = ranksAtStart.get(p.getId());
+            if (before != null) {
+                p.setRank(before.rank());
+                p.setCitizenNo(before.citizenNo());
+            }
         }
         this.isGameStarted = false;
         this.gameOver = false;
@@ -165,7 +177,7 @@ public class GameRoom {
         this.revolutionCandidateId = null;
         clearTrick();
         cleanUpAfterRound();
-        players.sort(Comparator.comparingInt(p -> p.getRank().getOrder()));
+        players.sort(BY_RANK);
     }
 
     public synchronized void updateSettings(String hostId, RoomSettings newSettings) {
@@ -327,7 +339,7 @@ public class GameRoom {
         if (players.size() < MIN_PLAYERS) throw new GameException("최소 " + MIN_PLAYERS + "명이 필요합니다.");
 
         ranksAtStart.clear();
-        for (Player p : players) ranksAtStart.put(p.getId(), p.getRank());
+        for (Player p : players) ranksAtStart.put(p.getId(), new RankAtStart(p.getRank(), p.getCitizenNo()));
     }
 
     private boolean allCitizens() {
@@ -390,9 +402,7 @@ public class GameRoom {
     // 숫자가 낮은(강한) 카드를 뽑은 순서대로 신분을 정하고 자리 배치 후 카드 배분. 첫 판은 세금·혁명 없음
     private void finishSeatDraw() {
         players.sort(Comparator.comparingInt(p -> seatDraws.get(p.getId()).getValue()));
-        for (int i = 0; i < players.size(); i++) {
-            players.get(i).setRank(rankOf(i, players.size()));
-        }
+        assignRanks(players);
         this.seatDrawPhase = false;
         deal(newShuffledDeck(), false);
     }
@@ -400,7 +410,7 @@ public class GameRoom {
     // 카드 배분. applyTax가 false면 (자리 뽑기 직후 첫 판) 세금 교환과 혁명 결정을 건너뜀
     private void deal(List<CardType> deck, boolean applyTax) {
         // 신분 순으로 자리 배치 (달무티가 0번 = 선)
-        players.sort(Comparator.comparingInt(p -> p.getRank().getOrder()));
+        players.sort(BY_RANK);
 
         for (Player p : players) {
             p.getHand().clear();
@@ -475,18 +485,22 @@ public class GameRoom {
         }
     }
 
-    // 대혁명: 달무티↔농노, 총리대신↔소작농. 새 신분 순으로 자리를 바꾸고 새 달무티가 선
+    // 대혁명: 달무티↔농노, 총리대신↔소작농, 평민 번호도 뒤집음. 새 신분 순으로 자리를 바꾸고 새 달무티가 선
     private void reverseRanks() {
+        int maxCitizenNo = 0;
+        for (Player p : players) maxCitizenNo = Math.max(maxCitizenNo, p.getCitizenNo());
         for (Player p : players) {
             switch (p.getRank()) {
                 case GREAT_DALMUTI -> p.setRank(Rank.SERF);
                 case SERF -> p.setRank(Rank.GREAT_DALMUTI);
                 case PRIME_MINISTER -> p.setRank(Rank.TENANT_FARMER);
                 case TENANT_FARMER -> p.setRank(Rank.PRIME_MINISTER);
-                default -> { }
+                case CITIZEN -> {
+                    if (p.getCitizenNo() > 0) p.setCitizenNo(maxCitizenNo + 1 - p.getCitizenNo());
+                }
             }
         }
-        players.sort(Comparator.comparingInt(p -> p.getRank().getOrder()));
+        players.sort(BY_RANK);
         this.currentTurnIndex = 0;
     }
 
@@ -591,6 +605,7 @@ public class GameRoom {
         this.currentTrickCount = cards.size();
         this.currentTrickType = extractType(cards);
         this.currentTrickPlayerId = currentPlayer.getId();
+        this.currentTrickJesterCount = currentTrickType == CardType.JESTER ? 0 : Collections.frequency(cards, CardType.JESTER);
         this.lastPlayerIndex = currentTurnIndex;
 
         if (currentPlayer.getHand().isEmpty()) {
@@ -617,16 +632,26 @@ public class GameRoom {
             if (!p.getHand().isEmpty()) finishOrder.add(p.getId());
         }
 
-        int n = finishOrder.size();
-        for (int i = 0; i < n; i++) {
-            findPlayer(finishOrder.get(i)).setRank(rankOf(i, n));
-        }
+        List<Player> byPlace = new ArrayList<>();
+        for (String id : finishOrder) byPlace.add(findPlayer(id));
+        assignRanks(byPlace);
 
         this.isGameStarted = false;
         this.gameOver = true;
         clearTrick();
 
         cleanUpAfterRound();
+    }
+
+    // 순위 순서대로 신분 부여. 가운데 평민들은 순위대로 1등 시민, 2등 시민 ... 번호를 매김
+    private void assignRanks(List<Player> byPlace) {
+        int citizenNo = 0;
+        for (int i = 0; i < byPlace.size(); i++) {
+            Player p = byPlace.get(i);
+            Rank rank = rankOf(i, byPlace.size());
+            p.setRank(rank);
+            p.setCitizenNo(rank == Rank.CITIZEN ? ++citizenNo : 0);
+        }
     }
 
     private Rank rankOf(int place, int total) {
@@ -650,6 +675,7 @@ public class GameRoom {
         this.currentTrickType = null;
         this.currentTrickCount = 0;
         this.currentTrickPlayerId = null;
+        this.currentTrickJesterCount = 0;
     }
 
     private void requireTurn(String playerId) {

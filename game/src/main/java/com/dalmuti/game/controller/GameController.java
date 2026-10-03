@@ -111,10 +111,11 @@ public class GameController {
         }
     }
 
-    // 연결이 끊긴 플레이어 차례에 게임이 멈추지 않도록 대신 진행하고, 방장 부재 시 다음 사람에게 넘김
-    // (방 설정의 유예 시간이 지난 뒤)
+    // 빈 채로 오래된 방을 정리하고, 연결이 끊긴 플레이어 차례에 게임이 멈추지 않도록 대신 진행,
+    // 방장 부재 시 다음 사람에게 넘김 (방 설정의 유예 시간이 지난 뒤)
     @Scheduled(fixedDelay = 1000)
     public void tick() {
+        gameService.expireEmptyRoom(Instant.now());
         gameService.currentRoom().ifPresent(room -> {
             synchronized (room) {
                 Instant now = Instant.now();

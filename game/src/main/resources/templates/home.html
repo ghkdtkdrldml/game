@@ -33,6 +33,11 @@
             <h3>참여 중인 방이 있습니다</h3>
             <p>게임으로 돌아가세요.</p>
             <a class="btn-link" th:href="@{/room/{code}(code=${myRoomCode})}">방으로 돌아가기</a>
+            <!-- 비어 있는 내 방이면 버리고 새로 만들 수도 있음 -->
+            <form th:if="${canCreate}" th:action="@{/rooms}" method="post" style="margin-top: 10px;"
+                  onsubmit="return confirm('기존 방을 없애고 새 방을 만들까요?')">
+                <button type="submit" class="btn-ghost">새 방 만들기 (기존 방은 사라짐)</button>
+            </form>
         </div>
 
         <!-- 다른 사람들이 쓰는 방이 있으면 초대 링크로만 입장 -->

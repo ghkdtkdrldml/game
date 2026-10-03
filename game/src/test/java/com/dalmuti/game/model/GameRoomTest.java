@@ -270,6 +270,24 @@ class GameRoomTest {
         assertEquals(COOK, room.getCurrentTrickType());
     }
 
+    // 전원이 끊기면 자동 진행을 멈추고 그대로 둠 → 돌아오면 이어서
+    @Test
+    void autoActionsPauseWhileEveryoneIsAway() {
+        GameRoom room = startedRoom("a", "b");
+        room.disconnectPlayer("a", T0);
+        room.disconnectPlayer("b", T0);
+
+        assertFalse(room.actForAwayPlayers(T0.plus(GRACE).plusSeconds(600), GRACE));
+        assertTrue(room.isGameStarted());
+        assertFalse(room.isGameOver());
+        assertEquals(0, room.getCurrentTurnIndex());
+
+        // 한 명이 돌아오면 다시 자동 진행 (끊긴 a의 차례는 넘어감)
+        room.addPlayer(new Player("b", "b"));
+        assertTrue(room.actForAwayPlayers(T0.plus(GRACE), GRACE));
+        assertEquals(1, room.getCurrentTurnIndex());
+    }
+
     @Test
     void awayLeadPassesLeadToNextPlayer() {
         GameRoom room = startedRoom("a", "b", "c");

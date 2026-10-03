@@ -6,13 +6,15 @@ import com.dalmuti.game.model.Player;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class GameServiceTest {
 
-    private final GameService service = new GameService(Duration.ofMinutes(1));
+    private static final Duration TTL = Duration.ofMinutes(5);
+    private final GameService service = new GameService(Duration.ofMinutes(1), TTL);
 
     private List<String> playerIds(GameRoom room) {
         return room.getPlayers().stream().map(Player::getId).toList();
@@ -45,12 +47,21 @@ class GameServiceTest {
     }
 
     @Test
-    void emptyRoomCanBeReplaced() {
+    void hostCanReplaceOwnEmptyRoomButOthersWaitForExpiry() {
         String first = service.createRoom("a");  // 만들고 아무도 안 들어옴
-        String second = service.createRoom("b");
+
+        // 다른 사람은 빈 방이 유지되는 동안 새로 못 만듦
+        assertFalse(service.canCreateRoom("b"));
+        assertThrows(GameException.class, () -> service.createRoom("b"));
+
+        // 방장 본인은 버리고 새로 만들 수 있음
+        String second = service.createRoom("a");
         assertNotEquals(first, second);
-        assertEquals("b", service.getRoom(second).getHostId());
         assertThrows(GameException.class, () -> service.getRoom(first));
+
+        // 유지 시간이 지나 삭제되면 누구나 만들 수 있음
+        assertTrue(service.expireEmptyRoom(Instant.now().plus(TTL)));
+        assertTrue(service.canCreateRoom("b"));
     }
 
     @Test
@@ -79,17 +90,36 @@ class GameServiceTest {
         assertTrue(room.getPlayers().get(0).isConnected());
     }
 
+    // 모바일에서 다 같이 잠깐 앱을 벗어나는 경우: 방과 판이 유지되고 돌아오면 이어서 진행
     @Test
-    void allDisconnectedRemovesRoom() {
+    void allDisconnectedKeepsRoomUntilExpiry() {
         String code = service.createRoom("a");
         GameRoom room = service.join(code, new Player("a", "A"), "s1");
         service.join(code, new Player("b", "B"), "s2");
         room.startGame("a");
 
         service.disconnect("s1");
-        assertTrue(service.disconnect("s2").isEmpty());
+        service.disconnect("s2");
+        assertSame(room, service.getRoom(code));
+        assertTrue(room.isGameStarted());
+        assertFalse(service.expireEmptyRoom(Instant.now().plusSeconds(60)));  // 유지 시간 전
 
-        // 방이 사라져 링크가 더 이상 유효하지 않고, 새 방을 만들 수 있음
+        // 돌아오면 이어서 진행, 빈 방 타이머도 해제
+        service.join(code, new Player("b", "B"), "s3");
+        assertTrue(room.getPlayers().stream().anyMatch(p -> p.getId().equals("b") && p.isConnected()));
+        assertFalse(service.expireEmptyRoom(Instant.now().plus(TTL).plusSeconds(1)));
+    }
+
+    @Test
+    void emptyRoomIsRemovedAfterTtl() {
+        String code = service.createRoom("a");
+        GameRoom room = service.join(code, new Player("a", "A"), "s1");
+        service.join(code, new Player("b", "B"), "s2");
+        room.startGame("a");
+        service.disconnect("s1");
+        service.disconnect("s2");
+
+        assertTrue(service.expireEmptyRoom(Instant.now().plus(TTL)));
         assertTrue(service.currentRoom().isEmpty());
         assertThrows(GameException.class, () -> service.getRoom(code));
         assertDoesNotThrow(() -> service.createRoom("c"));

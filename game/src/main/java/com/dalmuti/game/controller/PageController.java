@@ -44,12 +44,16 @@ public class PageController {
         model.addAttribute("error", error != null ? HOME_MESSAGES.get(error) : null);
         // 지금 있는 방: 내가 참여 중이면 돌아가기, 다른 사람들 방이면 만들기 불가 안내
         // (템플릿 조건식에서 null이 boolean으로 변환되지 않도록 기본값 지정)
+        // 락 순서(GameService → GameRoom)를 지키기 위해 방 락을 잡기 전에 확인
+        boolean canCreate = gameService.canCreateRoom(player.playerId());
+        model.addAttribute("canCreate", canCreate);
         model.addAttribute("roomBusy", false);
         gameService.currentRoom().ifPresent(room -> {
             synchronized (room) {
+                // 참여 중이거나, 비어 있는 동안 유지 중인 내 방(방장)이면 돌아가기
                 boolean member = room.allMembers().stream().anyMatch(p -> p.getId().equals(player.playerId()));
-                if (member) model.addAttribute("myRoomCode", room.getCode());
-                else if (room.hasConnectedPlayers()) model.addAttribute("roomBusy", true);
+                if (member || room.isHost(player.playerId())) model.addAttribute("myRoomCode", room.getCode());
+                else if (!canCreate) model.addAttribute("roomBusy", true);
             }
         });
         return "home";

@@ -21,6 +21,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Predicate;
@@ -165,6 +167,8 @@ class GameWebSocketTest {
             if (System.currentTimeMillis() > deadline) fail("방이 비워지지 않았습니다.");
             Thread.sleep(50);
         }
+        // 빈 방은 일정 시간 유지되므로, 다음 테스트가 새 방을 만들 수 있게 바로 삭제
+        gameService.expireEmptyRoom(Instant.now().plus(Duration.ofDays(1)));
     }
 
     // ---------- 페이지 ----------

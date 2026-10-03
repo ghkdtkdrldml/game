@@ -231,6 +231,8 @@ public class GameRoom {
     //  - 손패가 남은 플레이어가 모두 끊겼으면 판 종료
     public synchronized boolean actForAwayPlayers(Instant now, Duration grace) {
         if (!isGameStarted) return false;
+        // 아무도 접속해 있지 않으면 대신 진행하지 않고 그대로 멈춰 둠 (다 같이 잠깐 나간 경우 돌아와서 이어서 하도록)
+        if (!hasConnectedPlayers()) return false;
         boolean changed = false;
 
         // 자리 뽑기: 아직 안 뽑은 플레이어 대신 뽑기 (모두 뽑으면 바로 카드 배분)

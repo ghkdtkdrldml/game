@@ -363,6 +363,16 @@ function renderStatus() {
         count.textContent = `× ${room.currentTrickCount}`;
         row.append(cardFace(room.currentTrickType, 84), count);
         trick.append(row);
+
+        // 누가 냈는지 (이름은 사용자 입력이므로 textContent)
+        if (room.currentTrickPlayerId) {
+            const by = document.createElement('div');
+            by.className = 'trick-by';
+            by.textContent = room.currentTrickPlayerId === myPlayerId
+                ? '내가 냄'
+                : `${playerName(room.currentTrickPlayerId)} 님이 냄`;
+            trick.append(by);
+        }
     } else {
         text.textContent = '바닥이 비어 있습니다 — 선 플레이어가 아무 카드나 냅니다';
         trick.append(text);

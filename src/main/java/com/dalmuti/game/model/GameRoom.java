@@ -28,6 +28,8 @@ public class GameRoom {
     private int currentTurnIndex = 0;
     private CardType currentTrickType = null;
     private int currentTrickCount = 0;
+    // 지금 바닥에 깔린 카드를 낸 플레이어 (화면 표시용, 바닥이 비면 null)
+    private String currentTrickPlayerId = null;
     // 현재 바닥 카드를 낸 플레이어. 턴이 이 플레이어에게 돌아오면 나머지 전원이 패스한 것
     private int lastPlayerIndex = -1;
     private boolean isGameStarted = false;
@@ -588,6 +590,7 @@ public class GameRoom {
 
         this.currentTrickCount = cards.size();
         this.currentTrickType = extractType(cards);
+        this.currentTrickPlayerId = currentPlayer.getId();
         this.lastPlayerIndex = currentTurnIndex;
 
         if (currentPlayer.getHand().isEmpty()) {
@@ -646,6 +649,7 @@ public class GameRoom {
     private void clearTrick() {
         this.currentTrickType = null;
         this.currentTrickCount = 0;
+        this.currentTrickPlayerId = null;
     }
 
     private void requireTurn(String playerId) {

@@ -21,6 +21,8 @@ public record RoomState(
         int currentTurnIndex,
         CardType currentTrickType,
         int currentTrickCount,
+        // 바닥 카드를 낸 플레이어 (바닥이 비면 null)
+        String currentTrickPlayerId,
         boolean gameStarted,
         boolean gameOver,
         List<String> finishOrder,
@@ -59,6 +61,7 @@ public record RoomState(
                 room.getCurrentTurnIndex(),
                 room.getCurrentTrickType(),
                 room.getCurrentTrickCount(),
+                room.getCurrentTrickPlayerId(),
                 room.isGameStarted(),
                 room.isGameOver(),
                 List.copyOf(room.getFinishOrder()),

@@ -289,6 +289,24 @@ class GameRoomTest {
     }
 
     @Test
+    void trickRemembersWhoPlayedUntilCleared() {
+        GameRoom room = startedRoom("a", "b", "c");
+        setHand(room, 0, COOK, PEASANT);
+        setHand(room, 1, KNIGHT, PEASANT);
+        setHand(room, 2, PEASANT);
+
+        room.playCards("a", List.of(COOK));
+        assertEquals("a", room.getCurrentTrickPlayerId());
+        room.playCards("b", List.of(KNIGHT));
+        assertEquals("b", room.getCurrentTrickPlayerId());
+
+        room.pass("c");
+        room.pass("a");  // 전원 패스 → 바닥 비움
+        assertNull(room.getCurrentTrickPlayerId());
+        assertNull(room.getCurrentTrickType());
+    }
+
+    @Test
     void awayLeadPassesLeadToNextPlayer() {
         GameRoom room = startedRoom("a", "b", "c");
         room.disconnectPlayer("a", T0);  // a가 선

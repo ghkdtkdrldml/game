@@ -127,6 +127,7 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .trick-cards { display: flex; align-items: center; gap: 10px; }
 .trick-count { font-size: 22px; font-weight: bold; }
 .trick-text { color: var(--muted); }
+.trick-by { font-size: 14px; font-weight: bold; color: var(--gold-light); }
 .turn-text { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--panel-2); font-weight: bold; }
 .turn-text.mine { background: var(--accent); color: #fff; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.75; } }

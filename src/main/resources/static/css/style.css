@@ -400,6 +400,126 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .log-box { margin-top: 8px; max-height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; }
 .log-entry { padding: 2px 0; border-bottom: 1px solid var(--panel-2); }
 
+/* ---------- 이모티콘·채팅 ---------- */
+/* 하단 버튼 위 오른쪽에 떠 있는 버튼 */
+.fab-group {
+    position: fixed;
+    right: max(12px, calc((100vw - 480px) / 2 + 12px));
+    bottom: calc(var(--action-bar-h) + env(safe-area-inset-bottom) + 14px);
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.fab {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    min-height: 48px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--panel-2);
+    border: 1px solid #454b66;
+    font-size: 22px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+}
+.fab-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    line-height: 20px;
+}
+/* 이모티콘 판 */
+.emote-palette {
+    position: fixed;
+    right: max(70px, calc((100vw - 480px) / 2 + 70px));
+    bottom: calc(var(--action-bar-h) + env(safe-area-inset-bottom) + 14px);
+    z-index: 26;
+    display: grid;
+    grid-template-columns: repeat(5, 44px);
+    gap: 6px;
+    padding: 10px;
+    border-radius: 14px;
+    background: var(--panel);
+    border: 1px solid #454b66;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+}
+.emote-palette button { min-height: 44px; padding: 0; font-size: 26px; background: transparent; border: none; }
+/* 채팅창 */
+.chat-sheet { height: min(70vh, 560px); }
+.chat-header { display: flex; justify-content: space-between; align-items: center; }
+.chat-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+.chat-empty { color: var(--muted); text-align: center; margin: auto 0; font-size: 14px; }
+.chat-msg { max-width: 80%; align-self: flex-start; }
+.chat-msg.mine { align-self: flex-end; text-align: right; }
+.chat-msg .chat-name { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.chat-msg .chat-text {
+    display: inline-block;
+    padding: 8px 12px;
+    border-radius: 14px;
+    background: var(--panel-2);
+    font-size: 15px;
+    text-align: left;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+.chat-msg.mine .chat-text { background: var(--accent); }
+.chat-form { display: flex; gap: 8px; }
+.chat-form input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--panel-2); background: var(--panel-2); color: #fff; }
+/* 칩 위로 떠오르는 이모티콘·말풍선 (페이지와 함께 스크롤되도록 문서 기준 위치) */
+.float-layer { position: absolute; left: 0; top: 0; width: 100%; height: 0; z-index: 22; pointer-events: none; }
+.emote-float {
+    position: absolute;
+    font-size: 40px;
+    transform: translate(-50%, 0);
+    animation: emote-pop 1.6s ease-out forwards;
+}
+@keyframes emote-pop {
+    0%   { transform: translate(-50%, 10px) scale(0.4); opacity: 0; }
+    15%  { transform: translate(-50%, -10px) scale(1.3); opacity: 1; }
+    30%  { transform: translate(-50%, -20px) scale(1); }
+    100% { transform: translate(-50%, -80px) scale(1); opacity: 0; }
+}
+.chat-bubble {
+    position: absolute;
+    /* 화면 가장자리 근처에서도 글자 폭만큼 넓게 (절대 위치 요소는 남은 폭에 맞춰 좁아지므로) */
+    width: max-content;
+    max-width: 180px;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: #fff;
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: bold;
+    transform: translate(-50%, -100%);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    word-break: break-word;
+    animation: bubble-show 2.8s ease-out forwards;
+}
+.chat-bubble::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #fff;
+    border-bottom: 0;
+}
+@keyframes bubble-show {
+    0% { opacity: 0; margin-top: 6px; }
+    10% { opacity: 1; margin-top: 0; }
+    85% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
 /* ---------- 토스트 알림 ---------- */
 .toasts {
     position: fixed;

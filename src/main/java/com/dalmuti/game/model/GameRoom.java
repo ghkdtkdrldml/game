@@ -23,6 +23,18 @@ public class GameRoom {
 
     private record RankAtStart(Rank rank, int citizenNo) {}
 
+    // 채팅·이모티콘
+    public static final int CHAT_MAX_LENGTH = 100;
+    public static final int CHAT_HISTORY_SIZE = 50;
+    // 도배 방지: 채팅은 5초에 5개까지, 이모티콘은 1초에 1개까지
+    private static final int CHAT_BURST = 5;
+    private static final Duration CHAT_WINDOW = Duration.ofSeconds(5);
+    private static final Duration EMOTE_INTERVAL = Duration.ofSeconds(1);
+    // 최근 채팅 (새로고침·늦게 들어온 사람에게 보여주기용, 방이 사라지면 함께 사라짐)
+    private final Deque<ChatMessage> chatHistory = new ArrayDeque<>();
+    private final Map<String, Deque<Instant>> recentChats = new HashMap<>();
+    private final Map<String, Instant> lastEmoteAt = new HashMap<>();
+
     // 신분 순 자리: 신분 → 평민 번호 순 (번호 없는 평민은 번호 있는 평민 뒤)
     private static final Comparator<Player> BY_RANK = Comparator
             .comparingInt((Player p) -> p.getRank().getOrder())
@@ -196,6 +208,46 @@ public class GameRoom {
             throw new GameException("지금 인원(" + members + "명)보다 적게 정할 수 없습니다.");
         }
         this.settings = newSettings;
+    }
+
+    // ---------- 채팅·이모티콘 ----------
+
+    // 채팅 보내기. 방에 있는 사람(관전 대기자 포함)만, 강퇴된 사람은 불가
+    public synchronized ChatMessage addChat(String playerId, String text, Instant now) {
+        Player sender = requireChatMember(playerId);
+        String trimmed = text == null ? "" : text.strip();
+        if (trimmed.isEmpty()) throw new GameException("메시지를 입력하세요.");
+        if (trimmed.length() > CHAT_MAX_LENGTH) throw new GameException("메시지는 " + CHAT_MAX_LENGTH + "자까지 보낼 수 있습니다.");
+
+        Deque<Instant> recent = recentChats.computeIfAbsent(playerId, id -> new ArrayDeque<>());
+        while (!recent.isEmpty() && !recent.peekFirst().isAfter(now.minus(CHAT_WINDOW))) recent.pollFirst();
+        if (recent.size() >= CHAT_BURST) throw new GameException("메시지를 너무 빨리 보내고 있습니다. 잠시 후 다시 보내주세요.");
+        recent.addLast(now);
+
+        ChatMessage message = new ChatMessage(playerId, sender.getName(), trimmed, now.toEpochMilli());
+        chatHistory.addLast(message);
+        while (chatHistory.size() > CHAT_HISTORY_SIZE) chatHistory.pollFirst();
+        return message;
+    }
+
+    public synchronized List<ChatMessage> chatHistoryList() {
+        return List.copyOf(chatHistory);
+    }
+
+    // 이모티콘 보내기 (정해진 목록만, 1초에 1개까지). 기록은 남기지 않음
+    public synchronized void sendEmote(String playerId, String emoji, Instant now) {
+        requireChatMember(playerId);
+        if (!Emotes.ALLOWED.contains(emoji)) throw new GameException("보낼 수 없는 이모티콘입니다.");
+        Instant last = lastEmoteAt.get(playerId);
+        if (last != null && now.isBefore(last.plus(EMOTE_INTERVAL))) throw new GameException("이모티콘은 1초에 하나씩 보낼 수 있습니다.");
+        lastEmoteAt.put(playerId, now);
+    }
+
+    private Player requireChatMember(String playerId) {
+        rejectKicked(playerId);
+        Player p = findMember(playerId);
+        if (p == null) throw new GameException("방에 참가한 사람만 보낼 수 있습니다.");
+        return p;
     }
 
     // 판이 끝나거나 중단되면: 끊긴·강퇴된 플레이어 정리, 다음 판 대기자 합류

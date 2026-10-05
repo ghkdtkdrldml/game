@@ -69,6 +69,11 @@ function connect() {
             }
         });
 
+        // 채팅·이모티콘 (게임 상태와 별도로 옴)
+        stompClient.subscribe(`/topic/room/${roomCode}/chat`, message => onChatMessage(JSON.parse(message.body)));
+        stompClient.subscribe(`/topic/room/${roomCode}/emote`, message => showEmote(JSON.parse(message.body)));
+        stompClient.subscribe('/user/queue/chat-history', message => setChatHistory(JSON.parse(message.body)));
+
         // 방 입장 요청 (이름은 로그인 정보로 서버가 처리). 게임 중 재접속이면 손패 그대로 복귀
         stompClient.send(roomDest('join'), {});
     }, function (error) {
@@ -448,6 +453,7 @@ function renderPlayers() {
     room.players.forEach((p, idx) => {
         const chip = document.createElement('div');
         chip.className = 'player-chip';
+        chip.dataset.playerId = p.id;  // 이모티콘·말풍선을 띄울 위치를 찾기 위함
         if (p.id === myPlayerId) chip.classList.add('me');
         if (isPlaying(room) && idx === room.currentTurnIndex) chip.classList.add('turn');
         if (!p.connected) chip.classList.add('away');
@@ -500,6 +506,7 @@ function renderPlayers() {
     waitingList.replaceChildren(document.createTextNode('👀 다음 판 대기: '));
     waiting.forEach((p, i) => {
         const el = document.createElement('span');
+        el.dataset.playerId = p.id;
         el.textContent = (p.id === room.hostId ? '👑 ' : '') + p.name + (p.id === myPlayerId ? ' (나)' : '');
         if (amHost(room) && p.id !== myPlayerId) {
             el.style.textDecoration = 'underline';
@@ -827,6 +834,149 @@ function saveSettings() {
         allowLateJoin: $('setLateJoin').checked
     });
     closeSheets();
+}
+
+// ---------------- 채팅 ----------------
+
+const CHAT_HISTORY_SIZE = 50;
+let chatMessages = [];
+let chatOpen = false;
+let unreadChats = 0;
+
+function setChatHistory(messages) {
+    chatMessages = messages.slice(-CHAT_HISTORY_SIZE);
+    renderChatList();
+}
+
+function onChatMessage(msg) {
+    chatMessages.push(msg);
+    if (chatMessages.length > CHAT_HISTORY_SIZE) chatMessages.shift();
+    if (chatOpen) {
+        renderChatList();
+    } else if (msg.playerId !== myPlayerId) {
+        unreadChats++;
+        renderChatBadge();
+    }
+    // 채팅창을 열지 않아도 보이도록 보낸 사람 칩 위에 말풍선
+    showChatBubble(msg.playerId, msg.text);
+}
+
+function renderChatList() {
+    const list = $('chatList');
+    list.replaceChildren();
+    if (chatMessages.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'chat-empty';
+        empty.textContent = '아직 대화가 없습니다. 먼저 인사해 보세요!';
+        list.append(empty);
+        return;
+    }
+    // 이름·내용은 사용자 입력이므로 textContent 사용 (XSS 방지)
+    for (const msg of chatMessages) {
+        const item = document.createElement('div');
+        item.className = 'chat-msg' + (msg.playerId === myPlayerId ? ' mine' : '');
+        const name = document.createElement('div');
+        name.className = 'chat-name';
+        const time = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        name.textContent = msg.playerId === myPlayerId ? time : `${msg.name} · ${time}`;
+        const text = document.createElement('div');
+        text.className = 'chat-text';
+        text.textContent = msg.text;
+        item.append(name, text);
+        list.append(item);
+    }
+    list.scrollTop = list.scrollHeight;
+}
+
+function renderChatBadge() {
+    const badge = $('chatBadge');
+    badge.classList.toggle('hidden', unreadChats === 0);
+    badge.textContent = unreadChats > 99 ? '99+' : String(unreadChats);
+}
+
+function openChat() {
+    hideEmotePalette();
+    chatOpen = true;
+    unreadChats = 0;
+    renderChatBadge();
+    renderChatList();
+    $('chatSheet').classList.remove('hidden');
+}
+
+function closeChat() {
+    chatOpen = false;
+    $('chatSheet').classList.add('hidden');
+}
+
+function sendChat(event) {
+    event.preventDefault();
+    const input = $('chatInput');
+    const text = input.value.trim();
+    if (!text) return;
+    send(roomDest('chat'), { text });
+    input.value = '';
+}
+
+// ---------------- 이모티콘 ----------------
+
+function toggleEmotePalette() {
+    const palette = $('emotePalette');
+    if (!palette.classList.contains('hidden')) {
+        hideEmotePalette();
+        return;
+    }
+    if (palette.children.length === 0) {
+        for (const emoji of GAME_CONFIG.emotes) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = emoji;
+            btn.onclick = () => {
+                send(roomDest('emote'), { emoji });
+                hideEmotePalette();
+            };
+            palette.append(btn);
+        }
+    }
+    palette.classList.remove('hidden');
+}
+
+function hideEmotePalette() {
+    $('emotePalette').classList.add('hidden');
+}
+
+// 이모티콘 판 바깥을 누르면 닫기
+document.addEventListener('pointerdown', e => {
+    if (!e.target.closest('#emotePalette') && !e.target.closest('#btnEmote')) hideEmotePalette();
+});
+
+function showEmote(event) {
+    const el = document.createElement('div');
+    el.className = 'emote-float';
+    el.textContent = event.emoji;
+    floatAbove(event.playerId, el, 4, 30);
+}
+
+function showChatBubble(playerId, text) {
+    const el = document.createElement('div');
+    el.className = 'chat-bubble';
+    el.textContent = text.length > 40 ? text.slice(0, 40) + '…' : text;
+    floatAbove(playerId, el, 6, 96);  // 말풍선 최대 폭(180px)의 절반쯤은 화면 안에 들어오도록
+}
+
+// 플레이어 칩(관전 대기자는 대기 목록 이름) 위에 요소를 띄우고 애니메이션이 끝나면 제거.
+// 칩은 상태가 올 때마다 다시 그려지므로 칩 안이 아니라 별도 층에 문서 기준 위치로 띄움
+// edgeMargin: 화면 가장자리에서 최소한 띄울 거리 (가로 중심 기준)
+function floatAbove(playerId, el, gap, edgeMargin) {
+    const anchor = document.querySelector(`.player-chip[data-player-id="${CSS.escape(playerId)}"]`)
+        || document.querySelector(`#waitingList [data-player-id="${CSS.escape(playerId)}"]`)
+        || $('players');
+    const rect = anchor.getBoundingClientRect();
+    // 가로 스크롤로 칩이 화면 밖에 있거나 가장자리에 붙어 있으면 화면 안쪽으로 당김
+    const x = Math.min(Math.max(rect.left + rect.width / 2, edgeMargin), window.innerWidth - edgeMargin);
+    el.style.left = `${x + window.scrollX}px`;
+    el.style.top = `${rect.top + window.scrollY - gap}px`;
+    el.addEventListener('animationend', () => el.remove());
+    $('floatLayer').append(el);
 }
 
 // ---------------- 차례 남은 시간 ----------------

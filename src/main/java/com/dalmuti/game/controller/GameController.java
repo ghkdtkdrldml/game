@@ -4,6 +4,7 @@ package com.dalmuti.game.controller;
 import com.dalmuti.game.auth.PlayerPrincipal;
 import com.dalmuti.game.dto.*;
 import com.dalmuti.game.exception.GameException;
+import com.dalmuti.game.model.ChatMessage;
 import com.dalmuti.game.model.GameRoom;
 import com.dalmuti.game.model.Player;
 import com.dalmuti.game.model.RoomSettings;
@@ -40,6 +41,30 @@ public class GameController {
         // 상태 직렬화(전송)를 방 락 안에서 처리해 중간 상태가 전송되지 않도록 함
         synchronized (room) {
             broadcast(room);
+            // 새로고침·늦게 들어온 사람도 최근 대화를 볼 수 있도록 채팅 기록 전달
+            messagingTemplate.convertAndSendToUser(player.playerId(), "/queue/chat-history", room.chatHistoryList());
+        }
+    }
+
+    // ---------- 채팅·이모티콘 (게임 상태와 별도 경로로 방 전체에 전송) ----------
+
+    @MessageMapping("/room/{code}/chat")
+    public void chat(@DestinationVariable String code, ChatRequest request, Principal principal) {
+        String playerId = requirePlayerId(principal);
+        GameRoom room = gameService.getRoom(code);
+        synchronized (room) {
+            ChatMessage message = room.addChat(playerId, request.text(), Instant.now());
+            messagingTemplate.convertAndSend("/topic/room/" + code + "/chat", message);
+        }
+    }
+
+    @MessageMapping("/room/{code}/emote")
+    public void emote(@DestinationVariable String code, EmoteRequest request, Principal principal) {
+        String playerId = requirePlayerId(principal);
+        GameRoom room = gameService.getRoom(code);
+        synchronized (room) {
+            room.sendEmote(playerId, request.emoji(), Instant.now());
+            messagingTemplate.convertAndSend("/topic/room/" + code + "/emote", new EmoteEvent(playerId, request.emoji()));
         }
     }
 

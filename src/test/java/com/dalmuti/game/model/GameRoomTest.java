@@ -127,6 +127,63 @@ class GameRoomTest {
         assertEquals(List.of("d", "pm", "w", "s"), seatOrder(room));
     }
 
+    // ---------- 채팅·이모티콘 ----------
+
+    @Test
+    void chatValidatesAndTrims() {
+        GameRoom room = lobby("a", "b");
+        ChatMessage msg = room.addChat("a", "  안녕하세요  ", T0);
+        assertEquals("안녕하세요", msg.text());
+        assertEquals("a", msg.name());
+
+        assertThrows(GameException.class, () -> room.addChat("a", "   ", T0));
+        assertThrows(GameException.class, () -> room.addChat("a", "가".repeat(GameRoom.CHAT_MAX_LENGTH + 1), T0));
+        assertThrows(GameException.class, () -> room.addChat("x", "외부인", T0));  // 방에 없는 사람
+        assertDoesNotThrow(() -> room.addChat("a", "가".repeat(GameRoom.CHAT_MAX_LENGTH), T0.plusSeconds(1)));
+    }
+
+    @Test
+    void chatRateLimitAllowsBurstThenBlocks() {
+        GameRoom room = lobby("a", "b");
+        for (int i = 0; i < 5; i++) room.addChat("a", "도배" + i, T0.plusMillis(i * 100L));
+        assertThrows(GameException.class, () -> room.addChat("a", "6번째", T0.plusSeconds(1)));
+        assertDoesNotThrow(() -> room.addChat("b", "다른 사람은 괜찮음", T0.plusSeconds(1)));
+        // 5초가 지나면 다시 보낼 수 있음
+        assertDoesNotThrow(() -> room.addChat("a", "다시", T0.plusSeconds(6)));
+    }
+
+    @Test
+    void chatHistoryKeepsLatestFifty() {
+        GameRoom room = lobby("a", "b");
+        for (int i = 0; i < 60; i++) room.addChat(i % 2 == 0 ? "a" : "b", "msg" + i, T0.plusSeconds(i * 3L));
+        List<ChatMessage> history = room.chatHistoryList();
+        assertEquals(GameRoom.CHAT_HISTORY_SIZE, history.size());
+        assertEquals("msg10", history.get(0).text());
+        assertEquals("msg59", history.get(history.size() - 1).text());
+    }
+
+    @Test
+    void spectatorCanChatButKickedPlayerCannot() {
+        GameRoom room = startedRoom("a", "b", "c");
+        room.addPlayer(new Player("w", "w"));  // 관전 대기자
+        assertDoesNotThrow(() -> room.addChat("w", "구경중", T0));
+        assertDoesNotThrow(() -> room.sendEmote("w", "👍", T0));
+
+        room.kick("a", "b");  // 게임 중 강퇴
+        assertThrows(GameException.class, () -> room.addChat("b", "나 강퇴됨", T0));
+        assertThrows(GameException.class, () -> room.sendEmote("b", "😡", T0));
+    }
+
+    @Test
+    void emoteMustBeAllowedAndOncePerSecond() {
+        GameRoom room = lobby("a", "b");
+        assertThrows(GameException.class, () -> room.sendEmote("a", "🍕", T0));  // 목록에 없음
+        room.sendEmote("a", "😘", T0);
+        assertThrows(GameException.class, () -> room.sendEmote("a", "🤮", T0.plusMillis(500)));
+        assertDoesNotThrow(() -> room.sendEmote("a", "🤮", T0.plusSeconds(1)));
+        assertTrue(Emotes.ALLOWED.containsAll(List.of("😘", "🤮")));
+    }
+
     // ---------- 차례 제한 시간 ----------
 
     private static final Duration LIMIT = Duration.ofSeconds(30);

@@ -51,7 +51,9 @@ class GameWebSocketTest {
         final BlockingQueue<Map<?, ?>> states = new LinkedBlockingQueue<>();
         final BlockingQueue<Map<?, ?>> privates = new LinkedBlockingQueue<>();
         final BlockingQueue<Map<?, ?>> errors = new LinkedBlockingQueue<>();
-
+        final BlockingQueue<Map<?, ?>> chats = new LinkedBlockingQueue<>();
+        final BlockingQueue<Map<?, ?>> emotes = new LinkedBlockingQueue<>();
+        final BlockingQueue<List<?>> chatHistories = new LinkedBlockingQueue<>();
 
         Client(String cookie, String code) throws Exception {
             this.cookie = cookie;
@@ -62,6 +64,9 @@ class GameWebSocketTest {
             subscribe("/topic/room/" + code, Map.class, states);
             subscribe("/user/queue/private", Map.class, privates);
             subscribe("/user/queue/errors", Map.class, errors);
+            subscribe("/topic/room/" + code + "/chat", Map.class, chats);
+            subscribe("/topic/room/" + code + "/emote", Map.class, emotes);
+            subscribe("/user/queue/chat-history", List.class, chatHistories);
         }
 
         @SuppressWarnings({"unchecked", "rawtypes"})
@@ -353,6 +358,36 @@ class GameWebSocketTest {
         // 강퇴된 사람은 다시 들어올 수 없음
         guest.join();
         assertEquals("KICKED", guest.errors.poll(5, TimeUnit.SECONDS).get("code"));
+    }
+
+    @Test
+    void chatAndEmotesReachEveryoneAndHistoryIsSentOnJoin() throws Exception {
+        String hostCookie = login("방장");
+        String code = createRoom(hostCookie);
+        Client host = new Client(hostCookie, code);
+        Client guest = guest("손님", code);
+        host.join();
+        guest.join();
+        awaitMatching(host.states, s -> players(s).size() == 2);
+
+        host.send("chat", Map.of("text", "  안녕하세요  "));
+        Map<?, ?> received = awaitMatching(guest.chats, m -> true);
+        assertEquals("안녕하세요", received.get("text"));
+        assertEquals("방장", received.get("name"));
+
+        guest.send("emote", Map.of("emoji", "😘"));
+        Map<?, ?> emote = awaitMatching(host.emotes, m -> true);
+        assertEquals("😘", emote.get("emoji"));
+
+        // 목록에 없는 이모티콘은 보낸 사람에게만 오류
+        guest.send("emote", Map.of("emoji", "🍕"));
+        assertNotNull(guest.errors.poll(5, TimeUnit.SECONDS));
+
+        // 늦게 들어온 사람은 입장할 때 최근 채팅을 받음
+        Client late = guest("늦은사람", code);
+        late.join();
+        List<?> history = awaitMatching(late.chatHistories, h -> !h.isEmpty());
+        assertEquals("안녕하세요", ((Map<?, ?>) history.get(0)).get("text"));
     }
 
     @Test

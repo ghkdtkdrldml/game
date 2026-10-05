@@ -90,6 +90,35 @@
     </details>
 </div>
 
+<!-- 이모티콘·채팅 버튼 (하단 버튼 위 오른쪽에 떠 있음) -->
+<div class="fab-group">
+    <button type="button" id="btnEmote" class="fab" onclick="toggleEmotePalette()" aria-label="이모티콘">😀</button>
+    <button type="button" id="btnChat" class="fab" onclick="openChat()" aria-label="채팅">
+        💬<span id="chatBadge" class="fab-badge hidden"></span>
+    </button>
+</div>
+
+<!-- 이모티콘 판: 누르면 내 플레이어 칩에서 이모티콘이 튀어 오름 -->
+<div id="emotePalette" class="emote-palette hidden"></div>
+
+<!-- 채팅창 -->
+<div id="chatSheet" class="sheet-backdrop hidden" onclick="if (event.target === this) closeChat()">
+    <div class="sheet chat-sheet">
+        <div class="chat-header">
+            <h3>💬 채팅</h3>
+            <button type="button" class="link-btn" onclick="closeChat()">닫기</button>
+        </div>
+        <div id="chatList" class="chat-list"></div>
+        <form id="chatForm" class="chat-form" onsubmit="sendChat(event)">
+            <input type="text" id="chatInput" th:maxlength="${chatMaxLength}" placeholder="메시지 입력" autocomplete="off" enterkeyhint="send">
+            <button type="submit">보내기</button>
+        </form>
+    </div>
+</div>
+
+<!-- 이모티콘·말풍선이 떠오르는 층 (플레이어 칩 위치에 맞춰 띄움) -->
+<div id="floatLayer" class="float-layer"></div>
+
 <!-- 하단 고정 액션 바 -->
 <div class="action-bar">
     <div class="action-bar-inner">
@@ -157,7 +186,8 @@
         playerId: /*[[${playerId}]]*/ 'player-id',
         playerName: /*[[${playerName}]]*/ '플레이어',
         cards: /*[[${cards}]]*/ {},
-        rankNames: /*[[${rankNames}]]*/ {}
+        rankNames: /*[[${rankNames}]]*/ {},
+        emotes: /*[[${emotes}]]*/ []
     };
 </script>
 <script th:src="@{/js/game.js}"></script>

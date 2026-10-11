@@ -19,6 +19,11 @@ let stompClient = null;
 let connected = false;
 let reconnectTimer = null;
 let leaving = false;   // 강퇴·방 없음으로 홈으로 이동 중이면 재연결하지 않음
+// 화면이 오래 숨겨져 있어 일부러 연결을 끊은 상태 (다시 보면 재연결).
+// 숨겨진 탭이 연결을 계속 붙잡고 있으면 서버가 잠들지 못해 호스팅 비용이 계속 나감
+let pausedWhileHidden = false;
+let hiddenTimer = null;
+const HIDDEN_DISCONNECT_MS = 10 * 60 * 1000;
 let room = null;       // 방 공개 상태 (/topic/room/{방 코드})
 let me = null;         // 내 손패, 세금 내역 (/user/queue/private)
 let selected = {};     // 선택한 카드 종류 → 장수
@@ -78,7 +83,7 @@ function connect() {
         stompClient.send(roomDest('join'), {});
     }, function (error) {
         connected = false;
-        if (leaving) return;
+        if (leaving || pausedWhileHidden) return;
         // 로그인 세션이 만료된 경우 다시 로그인
         if (String(error).includes('로그인이 필요합니다')) {
             toast('로그인이 만료되었습니다. 다시 입장해주세요.', 'error');
@@ -95,9 +100,36 @@ function connect() {
 }
 
 // 모바일에서 앱 전환 후 돌아왔을 때 끊겨 있으면 기다리지 않고 바로 재연결
+// 화면이 10분 넘게 숨겨져 있으면(다른 탭·앱, 화면 꺼짐) 연결을 끊고, 다시 보면 재연결해 이어서 진행
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && !connected) connect();
+    if (document.visibilityState === 'hidden') {
+        clearTimeout(hiddenTimer);
+        hiddenTimer = setTimeout(disconnectWhileHidden, HIDDEN_DISCONNECT_MS);
+        return;
+    }
+    clearTimeout(hiddenTimer);
+    hiddenTimer = null;
+    if (pausedWhileHidden) {
+        pausedWhileHidden = false;
+        log('화면으로 돌아와 다시 연결합니다.');
+    }
+    if (!connected) connect();
 });
+
+function disconnectWhileHidden() {
+    if (document.visibilityState !== 'hidden' || !stompClient) return;
+    pausedWhileHidden = true;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    connected = false;
+    try {
+        stompClient.disconnect();
+    } catch (e) {
+        // 이미 끊겨 있으면 무시 (모바일은 백그라운드에서 연결이 먼저 끊기기도 함)
+    }
+    setConnection('bad', '대기 중');
+    log('화면이 오래 숨겨져 있어 연결을 잠시 끊었습니다.');
+}
 
 window.addEventListener('load', connect);
 

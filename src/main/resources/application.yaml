@@ -18,6 +18,11 @@ game:
   allowed-origins: ${GAME_ALLOWED_ORIGINS:}
 
 server:
+  tomcat:
+    threads:
+      # 동시 접속이 많아야 10명 정도라 기본값(최대 200)보다 크게 줄여 메모리 절약
+      max: 20
+      min-spare: 2
   # 프록시가 보내는 X-Forwarded-Host/Proto 헤더로 실제 접속 주소(https://도메인)를 인식
   # (없으면 서버가 http://내부주소로 요청받은 것으로 보고 WebSocket 출처 검사에서 거부함)
   forward-headers-strategy: framework

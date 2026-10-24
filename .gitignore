@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### graphify (코드 지식 그래프 분석 결과) ###
+graphify-out/

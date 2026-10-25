@@ -20,19 +20,20 @@ public record RoomSettings(Duration disconnectGrace, Duration turnTimeLimit, int
 
     public RoomSettings {
         if (disconnectGrace == null || disconnectGrace.compareTo(MIN_GRACE) < 0 || disconnectGrace.compareTo(MAX_GRACE) > 0) {
-            throw new GameException("연결 대기 시간은 15초~10분 사이로 정해주세요.");
+            throw new GameException("연결 대기 시간은 " + text(MIN_GRACE) + "~" + text(MAX_GRACE) + " 사이로 정해주세요.");
         }
         if (turnTimeLimit == null || (!turnTimeLimit.isZero()
                 && (turnTimeLimit.compareTo(MIN_TURN_LIMIT) < 0 || turnTimeLimit.compareTo(MAX_TURN_LIMIT) > 0))) {
-            throw new GameException("차례 제한 시간은 10초~5분 사이로 정하거나 제한 없음으로 해주세요.");
+            throw new GameException("차례 제한 시간은 " + text(MIN_TURN_LIMIT) + "~" + text(MAX_TURN_LIMIT) + " 사이로 정하거나 제한 없음으로 해주세요.");
         }
         if (maxPlayers < GameRoom.MIN_PLAYERS || maxPlayers > MAX_PLAYERS_LIMIT) {
             throw new GameException("최대 인원은 " + GameRoom.MIN_PLAYERS + "~" + MAX_PLAYERS_LIMIT + "명 사이로 정해주세요.");
         }
     }
 
-    public boolean hasTurnTimeLimit() {
-        return !turnTimeLimit.isZero();
+    // 15초, 10분처럼 표시 (분 단위로 나눠떨어지면 분)
+    private static String text(Duration d) {
+        return d.toSecondsPart() == 0 && d.toMinutes() > 0 ? d.toMinutes() + "분" : d.toSeconds() + "초";
     }
 
     public static RoomSettings defaults(Duration disconnectGrace, Duration turnTimeLimit) {

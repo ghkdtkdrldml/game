@@ -1,4 +1,3 @@
-// controller/GameController.java
 package com.dalmuti.game.controller;
 
 import com.dalmuti.game.auth.PlayerPrincipal;

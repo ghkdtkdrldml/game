@@ -1,4 +1,3 @@
-// dto/ActionRequest.java
 package com.dalmuti.game.dto;
 
 import com.dalmuti.game.model.CardType;

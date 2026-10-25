@@ -1,4 +1,3 @@
-// service/GameService.java
 package com.dalmuti.game.service;
 
 import com.dalmuti.game.exception.GameException;

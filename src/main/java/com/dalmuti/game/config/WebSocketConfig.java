@@ -1,4 +1,3 @@
-// config/WebSocketConfig.java
 package com.dalmuti.game.config;
 
 import com.dalmuti.game.auth.SessionPlayerHandshakeHandler;

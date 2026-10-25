@@ -191,12 +191,7 @@ public class GameRoom {
         this.gameOver = false;
         this.seatDrawPhase = false;
         this.seatDraws.clear();
-        this.finishOrder.clear();
-        this.taxExchanges.clear();
-        this.revolution = null;
-        this.revolutionDeclarerId = null;
-        this.revolutionCandidateId = null;
-        clearTrick();
+        resetRound();
         cleanUpAfterRound();
         players.sort(BY_RANK);
     }
@@ -478,12 +473,7 @@ public class GameRoom {
         this.seatDrawPile.clear();
         this.seatDrawPile.addAll(pile);
         this.seatDraws.clear();
-        this.finishOrder.clear();
-        this.taxExchanges.clear();
-        this.revolution = null;
-        this.revolutionDeclarerId = null;
-        this.revolutionCandidateId = null;
-        clearTrick();
+        resetRound();
         for (Player p : players) {
             p.getHand().clear();
         }
@@ -533,16 +523,10 @@ public class GameRoom {
 
         this.isGameStarted = true;
         this.gameOver = false;
-        this.finishOrder.clear();
         this.currentTurnIndex = 0;
         this.turnSeq++;
         this.lastPlayerIndex = -1;
-        clearTrick();
-
-        taxExchanges.clear();
-        this.revolution = null;
-        this.revolutionDeclarerId = null;
-        this.revolutionCandidateId = null;
+        resetRound();
         if (!applyTax) return;  // 자리 뽑기 직후 첫 판: 뽑기 결과는 표시용으로 남겨 둠
 
         seatDraws.clear();
@@ -776,6 +760,16 @@ public class GameRoom {
             if (!p.getHand().isEmpty()) count++;
         }
         return count;
+    }
+
+    // 판마다 새로 시작하는 진행 기록 (순위, 세금, 혁명, 바닥). 판 상태 필드를 추가하면 여기서 초기화
+    private void resetRound() {
+        this.finishOrder.clear();
+        this.taxExchanges.clear();
+        this.revolution = null;
+        this.revolutionDeclarerId = null;
+        this.revolutionCandidateId = null;
+        clearTrick();
     }
 
     private void clearTrick() {

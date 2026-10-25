@@ -6,6 +6,7 @@ import com.dalmuti.game.model.CardType;
 import com.dalmuti.game.model.Emotes;
 import com.dalmuti.game.model.GameRoom;
 import com.dalmuti.game.model.Rank;
+import com.dalmuti.game.model.RoomSettings;
 import com.dalmuti.game.service.GameService;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -87,6 +88,8 @@ public class PageController {
         model.addAttribute("rankNames", rankNames());
         model.addAttribute("emotes", Emotes.ALLOWED);
         model.addAttribute("chatMaxLength", GameRoom.CHAT_MAX_LENGTH);
+        model.addAttribute("minPlayers", GameRoom.MIN_PLAYERS);
+        model.addAttribute("maxPlayersLimit", RoomSettings.MAX_PLAYERS_LIMIT);
         return "game";
     }
 

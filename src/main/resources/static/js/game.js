@@ -6,7 +6,7 @@ const TOAST_MS = 2500;
 const URGENT_SECONDS = 10;              // 남은 시간이 이 이하면 빨갛게 표시 + 경고음
 const TICK_SECONDS = 5;                 // 내 차례 마지막 몇 초 동안 째깍 소리
 const SOUND_KEY = 'dalmuti.sound';      // 소리 설정 (이 기기 localStorage에 저장, 기본 켜짐)
-const MIN_PLAYERS = 2;
+const MIN_PLAYERS = GAME_CONFIG.minPlayers;
 
 const roomCode = GAME_CONFIG.roomCode;
 const myPlayerId = GAME_CONFIG.playerId;
@@ -852,7 +852,7 @@ function openSettings() {
     $('setTurnLimit').value = String(s.turnTimeLimitSeconds);
     const max = $('setMaxPlayers');
     max.replaceChildren();
-    for (let n = MIN_PLAYERS; n <= 10; n++) max.append(new Option(`${n}명`, n));
+    for (let n = MIN_PLAYERS; n <= GAME_CONFIG.maxPlayersLimit; n++) max.append(new Option(`${n}명`, n));
     max.value = String(s.maxPlayers);
     $('setLateJoin').checked = s.allowLateJoin;
     $('settingsSheet').classList.remove('hidden');

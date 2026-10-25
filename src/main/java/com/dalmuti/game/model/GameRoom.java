@@ -66,6 +66,9 @@ public class GameRoom {
     private boolean gameOver = false;
     // 손패를 모두 낸 순서 (playerId)
     private final List<String> finishOrder = new ArrayList<>();
+    // 이 방에서 끝난 판 수와 playerId → 신분별 횟수 (나갔다 와도 유지, 방이 사라지면 함께 사라짐)
+    private int roundsPlayed = 0;
+    private final Map<String, Map<Rank, Integer>> rankCounts = new HashMap<>();
 
     // 이번 판 세금 교환 기록. 반환 대기 중인 교환이 있으면 세금 교환 단계
     private final List<TaxExchange> taxExchanges = new ArrayList<>();
@@ -439,7 +442,25 @@ public class GameRoom {
         if (players.size() < MIN_PLAYERS) throw new GameException("최소 " + MIN_PLAYERS + "명이 필요합니다.");
 
         ranksAtStart.clear();
-        for (Player p : players) ranksAtStart.put(p.getId(), new RankAtStart(p.getRank(), p.getCitizenNo()));
+        for (Player p : players) {
+            ranksAtStart.put(p.getId(), new RankAtStart(p.getRank(), p.getCitizenNo()));
+            p.setReady(false);
+        }
+    }
+
+    // 대기실에서 다음 판 준비 표시. 시작 권한은 그대로 방장에게 있음 (준비 안 한 사람이 있어도 시작 가능)
+    public synchronized void setReady(String playerId, boolean ready) {
+        rejectKicked(playerId);
+        if (isGameStarted) throw new GameException("게임 진행 중에는 준비할 수 없습니다.");
+        Player p = findPlayer(playerId);
+        if (p == null) throw new GameException("방에 참가한 플레이어만 준비할 수 있습니다.");
+        p.setReady(ready);
+    }
+
+    public synchronized Map<String, Map<Rank, Integer>> getRankCounts() {
+        Map<String, Map<Rank, Integer>> copy = new HashMap<>();
+        rankCounts.forEach((id, counts) -> copy.put(id, Map.copyOf(counts)));
+        return copy;
     }
 
     private boolean allCitizens() {
@@ -726,6 +747,10 @@ public class GameRoom {
         List<Player> byPlace = new ArrayList<>();
         for (String id : finishOrder) byPlace.add(findPlayer(id));
         assignRanks(byPlace);
+        roundsPlayed++;
+        for (Player p : byPlace) {
+            rankCounts.computeIfAbsent(p.getId(), id -> new EnumMap<>(Rank.class)).merge(p.getRank(), 1, Integer::sum);
+        }
 
         this.isGameStarted = false;
         this.gameOver = true;

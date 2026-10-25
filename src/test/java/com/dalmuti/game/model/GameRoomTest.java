@@ -376,6 +376,29 @@ class GameRoomTest {
         assertEquals(List.of("c"), room.getWaitingPlayers().stream().map(Player::getId).toList());
     }
 
+    @Test
+    void readyOnlyInLobbyAndResetOnStart() {
+        GameRoom room = lobby("a", "b");
+        room.setReady("b", true);
+        assertTrue(player(room, "b").isReady());
+
+        room.startGame("a", GameRoom.newShuffledDeck());  // 준비 안 한 사람이 있어도 방장은 시작 가능
+        assertFalse(player(room, "b").isReady());
+        assertThrows(GameException.class, () -> room.setReady("b", true));
+    }
+
+    @Test
+    void rankCountsAccumulateAcrossRounds() {
+        GameRoom room = startedRoom("a", "b");
+        setHand(room, 0, COOK);
+        setHand(room, 1, PEASANT);
+        room.playCards("a", List.of(COOK));
+
+        assertEquals(1, room.getRoundsPlayed());
+        assertEquals(Map.of(Rank.GREAT_DALMUTI, 1), room.getRankCounts().get("a"));
+        assertEquals(Map.of(Rank.SERF, 1), room.getRankCounts().get("b"));
+    }
+
     private void setHand(GameRoom room, int idx, CardType... cards) {
         List<CardType> hand = room.getPlayers().get(idx).getHand();
         hand.clear();

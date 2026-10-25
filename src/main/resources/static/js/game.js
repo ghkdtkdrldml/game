@@ -114,7 +114,14 @@ document.addEventListener('visibilitychange', () => {
         log('화면으로 돌아와 다시 연결합니다.');
     }
     if (!connected) connect();
+    keepScreenOn();
 });
+
+// 화면이 꺼지면 연결이 끊겨 자동 패스로 이어지므로 이 페이지를 보는 동안 화면을 켜 둠
+// (화면을 벗어나면 브라우저가 해제하므로 돌아올 때마다 다시 요청. https가 아니거나 미지원 기기에서는 무시)
+function keepScreenOn() {
+    navigator.wakeLock?.request('screen').catch(() => {});
+}
 
 function disconnectWhileHidden() {
     if (document.visibilityState !== 'hidden' || !stompClient) return;
@@ -131,7 +138,10 @@ function disconnectWhileHidden() {
     log('화면이 오래 숨겨져 있어 연결을 잠시 끊었습니다.');
 }
 
-window.addEventListener('load', connect);
+window.addEventListener('load', () => {
+    connect();
+    keepScreenOn();
+});
 
 function setConnection(state, text) {
     $('conn').className = 'conn ' + state;
@@ -169,6 +179,14 @@ function onRoomState(next) {
         }
     }
 
+    // 바닥이 바뀌었으면 누군가 카드를 낸 것 (내 카드 포함, 서버가 받아들인 것만 기록)
+    // shortcut: 마지막 카드로 판이 끝나면 서버가 바닥을 바로 비워 그 수는 기록되지 않음, 필요하면 서버가 마지막 수를 따로 보내도록
+    const trickKey = r => r.currentTrickPlayerId && `${r.currentTrickPlayerId}|${r.currentTrickType}|${r.currentTrickCount}|${r.currentTrickJesterCount}`;
+    if (prev && trickKey(next) && trickKey(next) !== trickKey(prev)) {
+        const jesters = next.currentTrickJesterCount > 0 ? ` (어릿광대 ${next.currentTrickJesterCount}장 포함)` : '';
+        log(`🃏 ${playerName(next.currentTrickPlayerId)}: ${cardInfo[next.currentTrickType].name} ${next.currentTrickCount}장${jesters}`);
+    }
+
     // 상태 변화 알림
     if (!prev?.seatDrawPhase && next.seatDrawPhase) flippedSeatCard = null;
     if (!prev?.seatDrawPhase && next.seatDrawPhase && !amWaiting(next)) {
@@ -201,6 +219,14 @@ function onRoomState(next) {
         const result = place >= 0 && meNow ? `나는 ${place + 1}등 (${rankLabel(meNow)})` : '';
         log('🏁 게임 종료! ' + result);
         toast('게임 종료! ' + result);
+        // 이번 판 신분(직전 상태) → 다음 판 신분. 판이 끝나며 나간 사람은 직전 상태에만 있음
+        if (prev) {
+            openResults(next.finishOrder.map((id, i) => {
+                const before = prev.players.find(p => p.id === id);
+                const after = next.players.find(p => p.id === id);
+                return `${i + 1}등 ${before?.name ?? id} · ${before ? rankLabel(before) : ''} → ${after ? rankLabel(after) : '퇴장'}`;
+            }));
+        }
     }
     if (amWaiting(prev) && !amWaiting(next) && next.players.some(p => p.id === myPlayerId)) {
         toast('대기 끝! 다음 판부터 함께합니다', 'turn');
@@ -225,6 +251,7 @@ function onRoomState(next) {
     if (!isMyTurn(prev) && isMyTurn(next)) {
         toast('내 차례입니다!', 'turn');
         playSound('turn');
+        navigator.vibrate?.(200);  // 무음 모드에서도 알 수 있도록 (iOS Safari는 미지원)
     }
 
     render();
@@ -521,6 +548,7 @@ function renderPlayers() {
                 ? badge(`🎴 ${cardInfo[drawn].value} ${cardInfo[drawn].name}`, 'var(--gold-light)')
                 : badge('뽑는 중…', 'var(--muted)'));
         }
+        if (!room.gameStarted && p.ready) chip.append(badge('✅ 준비', 'var(--green)'));
         const place = room.finishOrder.indexOf(p.id);
         if (place >= 0) chip.append(badge(`🏅 ${place + 1}등`, 'var(--green)'));
         const taxToReturn = room.pendingTaxReturns[p.id];
@@ -682,7 +710,7 @@ function renderActions() {
 
     // 다음 판 대기(관전) 중이면 비활성 버튼과 안내만 표시
     if (amWaiting(room)) {
-        ['btnStart', 'btnDraw', 'btnRevolution', 'btnNoRevolution', 'btnTax', 'btnPass'].forEach(id => show(id, false));
+        ['btnStart', 'btnReady', 'btnDraw', 'btnRevolution', 'btnNoRevolution', 'btnTax', 'btnPass'].forEach(id => show(id, false));
         show('btnPlay', true);
         $('btnPlay').textContent = '다음 판 대기 중';
         $('btnPlay').disabled = true;
@@ -701,7 +729,9 @@ function renderActions() {
     // 다른 사람의 결정/반환을 기다리는 중이면 비활성 '내기' 버튼만 표시
     const waiting = (inSeatDraw && !canDraw) || (inRevolution && !canDecide) || (inTax && taxToReturn === 0);
 
-    show('btnStart', lobby);
+    // 게임 시작은 방장만, 나머지는 준비 표시
+    show('btnStart', lobby && amHost(room));
+    show('btnReady', lobby && !amHost(room));
     show('btnDraw', canDraw);
     show('btnRevolution', canDecide);
     show('btnNoRevolution', canDecide);
@@ -710,11 +740,16 @@ function renderActions() {
     show('btnPlay', playing || waiting);
 
     if (lobby) {
-        // 게임 시작은 방장만
+        const others = room.players.filter(p => p.id !== room.hostId);
+        const readyText = `준비 ${others.filter(p => p.ready).length}/${others.length}명`;
         $('btnStart').textContent = room.gameOver ? '다음 판 시작' : '게임 시작';
-        $('btnStart').disabled = !connected || !amHost(room) || room.players.length < MIN_PLAYERS;
+        $('btnStart').disabled = !connected || room.players.length < MIN_PLAYERS;
+        const ready = !!room.players.find(p => p.id === myPlayerId)?.ready;
+        $('btnReady').textContent = ready ? '준비 취소' : '✅ 준비';
+        $('btnReady').disabled = !connected;
         if (room.players.length < MIN_PLAYERS) hint = `최소 ${MIN_PLAYERS}명이 모여야 시작할 수 있습니다`;
-        else if (!amHost(room)) hint = `👑 방장(${playerName(room.hostId)})이 시작하길 기다리는 중`;
+        else if (amHost(room)) hint = readyText;
+        else hint = `👑 방장(${playerName(room.hostId)})이 시작하길 기다리는 중 · ${readyText}`;
     } else if (canDraw) {
         $('btnDraw').disabled = !connected;
         hint = '카드를 뽑아 이번 판 신분을 정하세요';
@@ -753,7 +788,40 @@ function renderActions() {
 // ---------------- 액션 ----------------
 
 function startGame() {
+    const notReady = room.players.filter(p => p.id !== myPlayerId && !p.ready).length;
+    if (notReady && !confirm(`아직 준비하지 않은 사람이 ${notReady}명 있습니다. 시작할까요?`)) return;
     send(roomDest('start'));
+}
+
+function toggleReady() {
+    send(roomDest('ready'), { ready: !room.players.find(p => p.id === myPlayerId)?.ready });
+}
+
+// 판 결과(roundRows, 판이 끝났을 때만)와 지금 방에 있는 사람들의 누적 전적
+function openResults(roundRows = []) {
+    $('userMenu').open = false;
+    const list = $('resultList');
+    list.replaceChildren();
+    // 이름은 사용자 입력이므로 textContent 사용
+    const row = (text, cls) => {
+        const el = document.createElement('div');
+        el.className = cls;
+        el.textContent = text;
+        list.append(el);
+    };
+    if (roundRows.length) {
+        row(`🏁 ${room.roundsPlayed}번째 판 결과`, 'result-head');
+        roundRows.forEach(text => row(text, 'result-row'));
+    }
+    row(`📊 누적 전적 (${room.roundsPlayed}판)`, 'result-head');
+    const count = (id, rank) => room.rankCounts[id]?.[rank] || 0;
+    [...room.players, ...room.waitingPlayers]
+        .sort((a, b) => count(b.id, 'GREAT_DALMUTI') - count(a.id, 'GREAT_DALMUTI') || count(a.id, 'SERF') - count(b.id, 'SERF'))
+        .forEach(p => {
+            const counts = Object.keys(rankNames).filter(r => count(p.id, r)).map(r => `${rankNames[r]} ${count(p.id, r)}`);
+            row(`${p.name}: ${counts.join(' · ') || '기록 없음'}`, 'result-row');
+        });
+    $('resultSheet').classList.remove('hidden');
 }
 
 function drawSeatCard() {
@@ -772,7 +840,6 @@ function playSelectedCards() {
         return;
     }
     send(roomDest('play'), { cards });
-    log(`카드 제출: ${cardList(cards)}`);
 }
 
 function returnTax() {
@@ -825,6 +892,7 @@ function openPlayerSheet(p) {
 function closeSheets() {
     $('playerSheet').classList.add('hidden');
     $('settingsSheet').classList.add('hidden');
+    $('resultSheet').classList.add('hidden');
     sheetTarget = null;
 }
 

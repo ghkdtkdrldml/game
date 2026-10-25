@@ -45,13 +45,17 @@ public record RoomState(
         long turnRemainingMs,
         // 시간 초과로 자동 패스된 플레이어와 누적 횟수 (알림용)
         String timedOutPlayerId,
-        long timeoutCount
+        long timeoutCount,
+        // 이 방에서 끝난 판 수와 playerId → 신분별 누적 횟수
+        int roundsPlayed,
+        Map<String, Map<Rank, Integer>> rankCounts
 ) {
     // kicked: 게임 중 강퇴되어 이번 판은 자동 패스, 판이 끝나면 제거됨
     // citizenNo: 평민끼리의 순서 (1등 시민 = 1). 0이면 번호 없음
-    public record PlayerView(String id, String name, Rank rank, int citizenNo, int handCount, boolean connected, boolean kicked) {
+    // ready: 대기실에서 다음 판 준비 완료
+    public record PlayerView(String id, String name, Rank rank, int citizenNo, int handCount, boolean connected, boolean kicked, boolean ready) {
         static PlayerView from(Player p) {
-            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getCitizenNo(), p.getHand().size(), p.isConnected(), p.isKicked());
+            return new PlayerView(p.getId(), p.getName(), p.getRank(), p.getCitizenNo(), p.getHand().size(), p.isConnected(), p.isKicked(), p.isReady());
         }
     }
 
@@ -86,7 +90,9 @@ public record RoomState(
                 Map.copyOf(room.getSeatDraws()),
                 room.turnRemainingMillis(Instant.now(), room.getSettings().turnTimeLimit()),
                 room.getTimedOutPlayerId(),
-                room.getTimeoutCount()
+                room.getTimeoutCount(),
+                room.getRoundsPlayed(),
+                room.getRankCounts()
         );
     }
 }

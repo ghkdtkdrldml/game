@@ -603,6 +603,9 @@ button:disabled, .btn-pass:disabled, .btn-tax:disabled, .btn-ghost:disabled {
 .sheet select { font-size: 16px; padding: 8px; border-radius: 8px; background: var(--panel-2); color: #fff; border: 1px solid #454b66; }
 .sheet input[type=checkbox] { width: 22px; height: 22px; }
 .sheet .sheet-note { font-size: 12px; color: var(--muted); }
+.result-list { max-height: 60vh; overflow-y: auto; }
+.result-head { font-size: 16px; font-weight: bold; color: var(--gold-light); margin: 8px 0 4px; }
+.result-row { font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--panel-2); }
 
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .invite-btn { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: 18px; background: var(--panel-2); color: var(--gold-light); }

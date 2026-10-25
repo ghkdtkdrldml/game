@@ -72,6 +72,11 @@ public class GameController {
         act(code, principal, (room, playerId) -> room.startGame(playerId));
     }
 
+    @MessageMapping("/room/{code}/ready")
+    public void setReady(@DestinationVariable String code, ReadyRequest request, Principal principal) {
+        act(code, principal, (room, playerId) -> room.setReady(playerId, request.ready()));
+    }
+
     @MessageMapping("/room/{code}/draw")
     public void drawSeatCard(@DestinationVariable String code, Principal principal) {
         act(code, principal, (room, playerId) -> room.drawSeatCard(playerId));

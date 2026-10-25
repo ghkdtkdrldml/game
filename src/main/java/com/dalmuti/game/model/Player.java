@@ -22,6 +22,8 @@ public class Player {
     private long joinSeq;
     // 게임 중 방장에게 강퇴됨: 이번 판은 자동 패스로 처리되고 판이 끝나면 제거
     private boolean kicked;
+    // 대기실에서 다음 판 준비 완료 표시 (판이 시작되면 초기화)
+    private boolean ready;
 
     public Player(String id, String name) {
         this.id = id;

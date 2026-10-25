@@ -28,6 +28,7 @@
                 <div class="menu-items">
                     <!-- 알림음 (설정은 이 기기에 저장) -->
                     <button type="button" id="menuSound" class="btn-ghost" onclick="toggleSound()">🔊 소리 켜짐</button>
+                    <button type="button" class="btn-ghost" onclick="openResults()">📊 전적</button>
                     <!-- 방장 전용 -->
                     <button type="button" id="menuSettings" class="btn-ghost hidden" onclick="openSettings()">⚙️ 방 설정</button>
                     <button type="button" id="menuAbort" class="btn-ghost hidden" onclick="abortRound()">⏹ 판 중단</button>
@@ -125,6 +126,7 @@
         <div id="actionHint" class="action-hint"></div>
         <div class="action-buttons">
             <button id="btnStart" class="hidden" onclick="startGame()">게임 시작</button>
+            <button id="btnReady" class="btn-tax hidden" onclick="toggleReady()">✅ 준비</button>
             <button id="btnDraw" class="btn-revolution hidden" onclick="drawSeatCard()">🎴 카드 뽑기</button>
             <button id="btnPass" class="btn-pass hidden" onclick="passTurn()">패스</button>
             <button id="btnPlay" class="hidden" onclick="playSelectedCards()">내기</button>
@@ -176,6 +178,14 @@
         <div class="sheet-note">차례 제한 시간이 지나면 자동으로 패스합니다(선이면 선을 넘김). 연결이 끊긴 사람은 대기 시간이 지나면 차례를 넘기고, 방장이 자리를 비우면 방장도 넘어갑니다.</div>
         <button type="button" onclick="saveSettings()">저장</button>
         <button type="button" class="btn-ghost" onclick="closeSheets()">취소</button>
+    </div>
+</div>
+
+<!-- 판 결과·누적 전적 (판이 끝나면 자동으로, 메뉴의 전적으로도 열림) -->
+<div id="resultSheet" class="sheet-backdrop hidden" onclick="if (event.target === this) closeSheets()">
+    <div class="sheet">
+        <div id="resultList" class="result-list"></div>
+        <button type="button" class="btn-ghost" onclick="closeSheets()">닫기</button>
     </div>
 </div>
 

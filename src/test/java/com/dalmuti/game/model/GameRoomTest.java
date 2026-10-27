@@ -792,7 +792,7 @@ class GameRoomTest {
     }
 
     @Test
-    void greatRevolutionReversesRanksWithoutTax() {
+    void greatRevolutionReversesRanksThenTaxes() {
         GameRoom room = rankedRoom();
         room.startGame("d", SERF_GETS_JESTERS);
         room.decideRevolution("s", true);
@@ -800,8 +800,11 @@ class GameRoomTest {
         assertEquals(Revolution.GREAT_REVOLUTION, room.getRevolution());
         assertEquals("s", room.getRevolutionDeclarerId());
         assertFalse(room.isRevolutionPending());
-        assertFalse(room.isTaxPhase());
-        assertTrue(room.getTaxExchanges().isEmpty());
+        // 뒤집힌 신분으로 세금: 원래 달무티 d → s 2장, 원래 총리대신 pm → tf 1장
+        assertTrue(room.isTaxPhase());
+        assertEquals(Map.of("s", 2, "tf", 1), room.getPendingTaxReturns());
+        assertEquals(List.of(DALMUTI, ARCHBISHOP), room.findTaxExchange("d").orElseThrow().getPaidCards());
+        assertEquals(List.of(ARCHBISHOP), room.findTaxExchange("pm").orElseThrow().getPaidCards());
 
         assertEquals(Rank.GREAT_DALMUTI, player(room, "s").getRank());
         assertEquals(Rank.PRIME_MINISTER, player(room, "tf").getRank());
@@ -810,8 +813,12 @@ class GameRoomTest {
         // 새 신분 순 자리, 새 달무티가 선
         assertEquals(List.of("s", "tf", "pm", "d"), seatOrder(room));
         assertEquals(0, room.getCurrentTurnIndex());
-        assertEquals(List.of(PEASANT, JESTER, JESTER), player(room, "s").getHand());  // 손패 그대로
-        assertDoesNotThrow(() -> room.playCards("s", List.of(PEASANT)));
+        assertEquals(List.of(DALMUTI, ARCHBISHOP, PEASANT, JESTER, JESTER), player(room, "s").getHand());
+
+        assertThrows(GameException.class, () -> room.playCards("s", List.of(PEASANT)));  // 세금 교환 먼저
+        room.returnTax("s", List.of(PEASANT, JESTER));
+        room.returnTax("tf", List.of(PEASANT));
+        assertDoesNotThrow(() -> room.playCards("s", List.of(DALMUTI)));
     }
 
     @Test

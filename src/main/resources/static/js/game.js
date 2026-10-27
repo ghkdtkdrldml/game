@@ -294,7 +294,7 @@ function isMyTurn(r) {
 function revolutionMessage(r) {
     const name = playerName(r.revolutionDeclarerId);
     return r.revolution === 'GREAT_REVOLUTION'
-        ? `🔥 ${name} 님의 대혁명! 신분이 뒤집히고 세금이 없습니다`
+        ? `🔥 ${name} 님의 대혁명! 신분이 뒤집힌 채로 세금을 교환합니다`
         : `🔥 ${name} 님의 혁명! 이번 판은 세금이 없습니다`;
 }
 
@@ -339,7 +339,7 @@ function renderRevolutionBanner() {
 
     const myRank = room.players.find(p => p.id === myPlayerId)?.rank;
     $('revText').textContent = myRank === 'SERF'
-        ? '농노인 내가 선언하면 대혁명! 신분이 뒤집혀 내가 달무티가 되고, 세금 교환도 없습니다.'
+        ? '농노인 내가 선언하면 대혁명! 신분이 뒤집혀 내가 달무티가 되고, 원래 달무티에게서 세금을 받습니다.'
         : '선언하면 이번 판은 세금 교환 없이 바로 시작합니다. 선언하지 않으면 평소대로 세금을 교환합니다.';
 }
 
@@ -484,7 +484,7 @@ function renderStatus() {
     if (room.gameStarted && room.revolution) {
         const tag = document.createElement('div');
         tag.className = 'rev-tag';
-        tag.textContent = room.revolution === 'GREAT_REVOLUTION' ? '🔥 대혁명 판 — 신분 역전, 세금 없음' : '🔥 혁명 판 — 세금 없음';
+        tag.textContent = room.revolution === 'GREAT_REVOLUTION' ? '🔥 대혁명 판 — 신분 역전' : '🔥 혁명 판 — 세금 없음';
         trick.append(tag);
     }
 

@@ -566,7 +566,7 @@ public class GameRoom {
     }
 
     // 어릿광대 2장을 가진 플레이어가 혁명 선언 여부를 결정
-    //  - 선언: 세금 교환 없음. 선언자가 농노면 대혁명으로 신분이 뒤집힘
+    //  - 선언: 세금 교환 없음. 단, 선언자가 농노면 대혁명으로 신분이 뒤집히고 뒤집힌 신분으로 세금 교환
     //  - 안 함: 평소대로 세금 교환
     public synchronized void decideRevolution(String playerId, boolean declare) {
         rejectKicked(playerId);
@@ -591,6 +591,7 @@ public class GameRoom {
         if (declarer.getRank() == Rank.SERF) {
             this.revolution = Revolution.GREAT_REVOLUTION;
             reverseRanks();
+            collectTaxes();  // 원래 달무티(새 농노)가 원래 농노(새 달무티)에게 냄
         } else {
             this.revolution = Revolution.REVOLUTION;
         }
